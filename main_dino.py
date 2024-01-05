@@ -27,6 +27,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
 
@@ -133,6 +134,11 @@ def get_args_parser():
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+
+    # torchgeo specific
+    parser.add_argument("--filename_glob", default="*.[tT][iI][fF]", type=str, help="Filename glob to select dataset files")
+    parser.add_argument("--file_path", default="./data/tif/", type=str, help="directory containing the raster files")
+
     return parser
 
 
@@ -144,21 +150,57 @@ def train_dino(args):
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
-    transform = DataAugmentationDINO(
+
+    MEANS = [3211.0983403106256, 2473.9249186805423, 1675.3644890560977, 4335.811473646549,789.30445481992, 788.94334968111] 
+    SDS = [1222.8046380984822, 811.0329354546556, 511.7795012804498, 976.456252068188,24.758130975788,24.832657292941] 
+
+    transform = DataAugmentationDINOTorchgeo(
         args.global_crops_scale,
         args.local_crops_scale,
         args.local_crops_number,
+        dataset_mean = MEANS,
+        dataset_std = SDS
     )
-    dataset = datasets.ImageFolder(args.data_path, transform=transform)
-    sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
-        sampler=sampler,
-        batch_size=args.batch_size_per_gpu,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        drop_last=True,
-    )
+
+    
+    class Raster(RasterDataset):
+        filename_glob = args.filename_glob
+        is_image = True
+        # all_bands=args.all_bands
+
+    dataset = Raster(args.file_path)
+
+    dataset.transforms = transforms
+
+    bb = dataset.index.bounds
+
+    roi = BoundingBox(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
+    sampler = RandomGeoSampler(
+            dataset, 
+            size=(100,100), 
+            length=1000, 
+            roi = roi
+            )
+
+    data_loader = DataLoader(
+            dataset, 
+            sampler=sampler, 
+            collate_fn=stack_samples, 
+            shuffle=False, 
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            )
+
+    # data_loader = torch.utils.data.DataLoader(
+    #     dataset,
+    #     sampler=sampler,
+    #     batch_size=args.batch_size_per_gpu,
+    #     num_workers=args.num_workers,
+    #     pin_memory=True,
+    #     drop_last=True,
+    # )
     print(f"Data loaded: there are {len(dataset)} images.")
 
     # ============ building student and teacher networks ... ============
@@ -423,53 +465,6 @@ class DINOLoss(nn.Module):
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
 
-# class DataAugmentationDINO(object):
-#     def __init__(self, global_crops_scale, local_crops_scale, local_crops_number):
-#         flip_and_color_jitter = transforms.Compose([
-#             transforms.RandomHorizontalFlip(p=0.5),
-#             transforms.RandomApply(
-#                 [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
-#                 p=0.8
-#             ),
-#             transforms.RandomGrayscale(p=0.2),
-#         ])
-#         normalize = transforms.Compose([
-#             transforms.ToTensor(),
-#             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-#         ])
-
-#         # first global crop
-#         self.global_transfo1 = transforms.Compose([
-#             transforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
-#             flip_and_color_jitter,
-#             utils.GaussianBlur(1.0),
-#             normalize,
-#         ])
-#         # second global crop
-#         self.global_transfo2 = transforms.Compose([
-#             transforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
-#             flip_and_color_jitter,
-#             utils.GaussianBlur(0.1),
-#             utils.Solarization(0.2),
-#             normalize,
-#         ])
-#         # transformation for the local small crops
-#         self.local_crops_number = local_crops_number
-#         self.local_transfo = transforms.Compose([
-#             transforms.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
-#             flip_and_color_jitter,
-#             utils.GaussianBlur(p=0.5),
-#             normalize,
-#         ])
-
-#     def __call__(self, image):
-#         crops = []
-#         crops.append(self.global_transfo1(image))
-#         crops.append(self.global_transfo2(image))
-#         for _ in range(self.local_crops_number):
-#             crops.append(self.local_transfo(image))
-#         return crops
-
 class GaussianBlur(transforms.RandomApply):
     def __init__(self, *, p: float = 0.5, radius_min: float = 0.1, radius_max: float = 2.0):
         # NOTE: torchvision is applying 1 - probability to return the original image
@@ -486,8 +481,8 @@ class DataAugmentationDINOTorchgeo(object):
         local_crops_number,
         global_crops_size=224,
         local_crops_size=96,
-        #dataset_mean = 0,
-        #dataset_std = 1
+        dataset_mean = [0],
+        dataset_std = [1]
     ):
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
@@ -515,18 +510,24 @@ class DataAugmentationDINOTorchgeo(object):
                 data_keys=["image"]
         )
 
-        IMAGESET_DEFAULT_MEAN = [101.46047364732716]       #TODO : needs to be determined dynamically           #dataset_mean 
-        IMAGESET_DEFAULT_STD = [18.518984529105996]       #TODO : needs to be determined dynamically            #dataset_std    
+        # IMAGESET_DEFAULT_MEAN = [101.46047364732716]       #TODO : needs to be determined dynamically           #dataset_mean 
+        # IMAGESET_DEFAULT_STD = [18.518984529105996]       #TODO : needs to be determined dynamically            #dataset_std    
 
-        def make_normalize_transform(
-            mean = IMAGESET_DEFAULT_MEAN,
-            std = IMAGESET_DEFAULT_STD,
-        ):
-            return Normalize(mean=mean, std=std)            
+        # def make_normalize_transform(
+        #     mean = IMAGESET_DEFAULT_MEAN,
+        #     std = IMAGESET_DEFAULT_STD,
+        # ):
+        #     return Normalize(mean=mean, std=std)            
     
+        # # normalization
+        # self.normalize = AugmentationSequential(
+        #         make_normalize_transform(),
+        #         data_keys=["image"],
+        # )
+
         # normalization
         self.normalize = AugmentationSequential(
-                make_normalize_transform(),
+                Normalize(dataset_mean, dataset_std),
                 data_keys=["image"],
         )
       
