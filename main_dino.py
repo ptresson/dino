@@ -19,6 +19,7 @@ import time
 import math
 import json
 from pathlib import Path
+from functools import partial
 
 import numpy as np
 from PIL import Image
@@ -47,6 +48,23 @@ from vision_transformer import DINOHead
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
+
+def collate_data_and_cast_torchgeo(
+        samples_list, 
+        ):
+
+    n_global_crops = len(samples_list[0]["global_crops"])
+    n_local_crops = len(samples_list[0]["local_crops"])
+
+    collated_global_crops = torch.stack([s["global_crops"][i]['image'][0] for i in range(n_global_crops) for s in samples_list])
+    collated_local_crops = torch.stack([s["local_crops"][i]['image'][0] for i in range(n_local_crops) for s in samples_list])
+
+    return {
+        "collated_global_crops": collated_global_crops,     #.to(dtype)
+        "collated_local_crops": collated_local_crops,       #.to(dtype)
+    }
+
+
 
 def merge_dataloaders(*itrs):
     for itr in itrs:
@@ -331,10 +349,14 @@ def train_dino(args):
             roi=roi2
             )
 
+    collate_fn = partial(
+        collate_data_and_cast_torchgeo,            #_torchgeo
+    )
+
     data_loader1 = DataLoader(
             dataset1, 
             sampler=sampler1, 
-            collate_fn=stack_samples, 
+            collate_fn=collate_fn, 
             shuffle=False, 
             batch_size=args.batch_size_per_gpu,
             num_workers=args.num_workers,
@@ -344,7 +366,7 @@ def train_dino(args):
     data_loader2 = DataLoader(
             dataset2, 
             sampler=sampler2, 
-            collate_fn=stack_samples, 
+            collate_fn=collate_fn, 
             shuffle=False, 
             batch_size=args.batch_size_per_gpu,
             num_workers=args.num_workers,
