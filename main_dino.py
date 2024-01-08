@@ -30,6 +30,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
+import timm
+from timm import create_model
 
 from torchgeo.datasets import RasterDataset, stack_samples, unbind_samples, BoundingBox
 from torchgeo.samplers import RandomGeoSampler, GridGeoSampler
@@ -142,6 +144,135 @@ def get_args_parser():
     return parser
 
 
+def vit_first_layer_with_nchan(
+        model,
+        in_chans=1,
+        embed_dim=768, 
+        patch_size=16,
+        ):
+
+    # cf. https://github.com/facebookresearch/dino/issues/214
+    # create empty proj layer
+    new_conv = torch.nn.Conv2d(in_chans, embed_dim, kernel_size=(patch_size, patch_size), stride=(patch_size, patch_size))
+    weight = model.patch_embed.proj.weight.clone()
+    bias = model.patch_embed.proj.bias.clone()
+    with torch.no_grad():
+        for i in range(0,in_chans):
+            j = i%3 # cycle every 3 bands
+            new_conv.weight[:,i,:,:] = weight[:,j,:,:] #band i takes old band j (blue) weights
+        new_conv.bias[:] = bias[:]
+    model.patch_embed.proj = new_conv
+
+    return model
+
+
+def resnet_first_layer_with_nchan(
+        model,
+        in_chans=1,
+        ):
+
+    # cf. https://github.com/facebookresearch/dino/issues/214
+    # (conv1): Conv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+    new_conv = torch.nn.Conv2d(in_chans, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+    weight = model.conv1.weight.clone()
+    with torch.no_grad():
+        for i in range(0,in_chans):
+            j = i%3 # cycle every 3 bands
+            new_conv.weight[:,i,:,:] = weight[:,j,:,:] #band i takes old band j (blue) weights
+    model.conv1 = new_conv
+
+    return model
+
+def get_model(arch, in_chans, drop_path_rate, pretrained=None, patch_size=16):
+
+    if arch in torch.hub.list("facebookresearch/dino:main"):
+        if 'vit' in arch :
+            student = torch.hub.load('facebookresearch/dino:main', arch,
+                                    drop_path_rate=drop_path_rate,
+                                    in_chans=in_chans,
+                                    strict=False,
+                                    pretrained=False,
+                                    )
+            teacher = torch.hub.load('facebookresearch/dino:main', 
+                    arch, 
+                    in_chans=in_chans,
+                    pretrained=False,
+                    )
+
+        if 'resnet' in arch :
+            print("================== Resnet50")
+            student = torch.hub.load('facebookresearch/dino:main', arch,
+                                    )
+            student = resnet_first_layer_with_nchan(student, in_chans)
+
+            teacher = torch.hub.load('facebookresearch/dino:main', 
+                    arch, 
+                    )
+            teacher = resnet_first_layer_with_nchan(teacher, in_chans)
+        # teacher = torch.hub.load('facebookresearch/dino:main', 
+        #         arch, 
+        #         in_chans=in_chans,
+        #         pretrained=False,
+        #         )
+
+        # get embed_dim before fully loading model to avoid hardcoding value
+        if not hasattr(student, 'embed_dim'):
+            x = student(torch.rand(1,in_chans,224,224))
+            student.fc, student.head = nn.Identity(), nn.Identity()
+            embed_dim = x.shape[1]
+        else:
+            embed_dim = student.embed_dim
+
+
+        if pretrained and in_chans != 3:
+            if 'vit' in arch :
+                pretrained = torch.hub.load('facebookresearch/dino:main', arch,
+                                        pretrained=True, 
+                                        drop_path_rate=drop_path_rate,
+                                        )
+                pretrained=vit_first_layer_with_nchan(
+                        pretrained,
+                        in_chans=in_chans,
+                        embed_dim=embed_dim,
+                        patch_size=patch_size
+                        )
+            if 'resnet' in arch :
+                pretrained = torch.hub.load('facebookresearch/dino:main', arch,
+                                        pretrained=True, 
+                                        )
+                pretrained=resnet_first_layer_with_nchan(
+                        pretrained,
+                        in_chans=in_chans,
+                        )
+
+            student.load_state_dict(pretrained.state_dict())
+            teacher.load_state_dict(pretrained.state_dict())
+
+
+
+    elif arch in timm.list_models(pretrained=True):
+        student = create_model(
+                arch,
+                pretrained=pretrained,
+                drop_path_rate=drop_path_rate,
+                in_chans=in_chans,
+                )
+        teacher = create_model(
+                arch,
+                pretrained=pretrained,
+                in_chans=in_chans,
+                )
+
+        if not hasattr(student, 'embed_dim'):
+            x = student(torch.rand(1,in_chans,224,224))
+            student.fc, student.head = nn.Identity(), nn.Identity()
+            embed_dim = x.shape[1]
+        else:
+            embed_dim = student.embed_dim
+
+    return student, teacher, embed_dim
+
+
 def train_dino(args):
     utils.init_distributed_mode(args)
     utils.fix_random_seeds(args.seed)
@@ -211,22 +342,28 @@ def train_dino(args):
         student = vits.__dict__[args.arch](
             patch_size=args.patch_size,
             drop_path_rate=args.drop_path_rate,  # stochastic depth
+    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+
+        print(arch)
+
+        student, teacher, embed_dim = get_model(arch, len(MEANS), args.drop_path_rate, pretrained)
+
+        # multi-crop wrapper handles forward with inputs of different resolutions
+        student = utils.MultiCropWrapper(student, DINOHead(
+            embed_dim,
+            args.out_dim,
+            use_bn=args.use_bn_in_head,
+            norm_last_layer=args.norm_last_layer,
+        ))
+        teacher = utils.MultiCropWrapper(
+            teacher,
+            DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
         )
-        teacher = vits.__dict__[args.arch](patch_size=args.patch_size)
-        embed_dim = student.embed_dim
-    # if the network is a XCiT
-    elif args.arch in torch.hub.list("facebookresearch/xcit:main"):
-        student = torch.hub.load('facebookresearch/xcit:main', args.arch,
-                                 pretrained=False, drop_path_rate=args.drop_path_rate)
-        teacher = torch.hub.load('facebookresearch/xcit:main', args.arch, pretrained=False)
-        embed_dim = student.embed_dim
-    # otherwise, we check if the architecture is in torchvision models
-    elif args.arch in torchvision_models.__dict__.keys():
-        student = torchvision_models.__dict__[args.arch]()
-        teacher = torchvision_models.__dict__[args.arch]()
-        embed_dim = student.fc.weight.shape[1]
-    else:
-        print(f"Unknow architecture: {args.arch}")
+
+        print(student)
+        del student
+
+    sys.exit(1)
 
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = utils.MultiCropWrapper(student, DINOHead(
