@@ -71,6 +71,18 @@ def merge_dataloaders(*itrs):
         for v in itr:
             yield v
 
+class MergedDataLoader:
+    def __init__(self, *dataloaders):
+        self.dataloaders = dataloaders
+        self.dataset = None  # You may need to define a custom dataset for this
+
+    def __iter__(self):
+        return itertools.chain(*[iter(dataloader) for dataloader in self.dataloaders])
+
+    def __len__(self):
+        return sum(len(dataloader) for dataloader in self.dataloaders)
+
+
 def get_args_parser():
     parser = argparse.ArgumentParser('DINO', add_help=False)
 
@@ -374,7 +386,9 @@ def train_dino(args):
             drop_last=True,
             )
 
-    data_loader = merge_dataloaders(data_loader1,data_loader2)
+    # data_loader = merge_dataloaders(data_loader1,data_loader2)
+    data_loader=MergedDataLoader(data_loader1, data_loader2)
+    # len_dataloader = len(data_loader1) + len(data_loader2)
 
     # for batch in data_loader:
     #     # print(batch['image'])
@@ -433,6 +447,7 @@ def train_dino(args):
         teacher,
         DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
     )
+
     # move networks to gpu
     student, teacher = student.cuda(), teacher.cuda()
     # synchronize batch norms (if any)
@@ -510,7 +525,7 @@ def train_dino(args):
     start_time = time.time()
     print("Starting DINO training !")
     for epoch in range(start_epoch, args.epochs):
-        data_loader.sampler.set_epoch(epoch)
+        # data_loader.sampler.set_epoch(epoch)
 
         # ============ training one epoch of DINO ... ============
         train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
@@ -546,20 +561,29 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                     fp16_scaler, args):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
-    for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+    # for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+    it=0
+    for batch in data_loader:
+
+        global_crops = batch['collated_global_crops']
+        local_crops = batch['collated_local_crops']
+        print(local_crops.shape)
+        global_crops = global_crops.cuda()
+        local_crops = local_crops.cuda()
         # update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration
+
         for i, param_group in enumerate(optimizer.param_groups):
             param_group["lr"] = lr_schedule[it]
             if i == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
 
         # move images to gpu
-        images = [im.cuda(non_blocking=True) for im in images]
+        # images = [im.cuda(non_blocking=True) for im in images]
         # teacher and student forward passes + compute dino loss
         with torch.cuda.amp.autocast(fp16_scaler is not None):
-            teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
-            student_output = student(images)
+            teacher_output = teacher(global_crops)  # only the 2 global views pass through the teacher
+            student_output = student(local_crops)
             loss = dino_loss(student_output, teacher_output, epoch)
 
         if not math.isfinite(loss.item()):
@@ -624,6 +648,8 @@ class DINOLoss(nn.Module):
         """
         Cross-entropy between softmax outputs of the teacher and student networks.
         """
+        print(student_output.shape)
+        print(teacher_output.shape)
         student_out = student_output / self.student_temp
         student_out = student_out.chunk(self.ncrops)
 
@@ -742,10 +768,10 @@ class DataAugmentationDINOTorchgeo(object):
         global_crop_1 = self.global_transfo1(im1_base)
 
         im2_base = self.geometric_augmentation_global(image)
-        print('im2 base : ', im2_base)
+        # print('im2 base : ', im2_base)
         global_crop_2 = self.global_transfo2(im2_base)
         output["global_crops"] = [global_crop_1, global_crop_2]
-        print('output global crops im2 : ', output['global_crops'][1])
+        # print('output global crops im2 : ', output['global_crops'][1])
         # global crops for teacher:
         output["global_crops_teacher"] = [global_crop_1, global_crop_2]
         # local crops:
