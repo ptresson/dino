@@ -48,6 +48,11 @@ torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
 
+def merge_dataloaders(*itrs):
+    for itr in itrs:
+        for v in itr:
+            yield v
+
 def get_args_parser():
     parser = argparse.ArgumentParser('DINO', add_help=False)
 
@@ -284,8 +289,10 @@ def train_dino(args):
 
     # ============ preparing data ... ============
 
-    MEANS = [3211.0983403106256, 2473.9249186805423, 1675.3644890560977, 4335.811473646549,789.30445481992, 788.94334968111] 
-    SDS = [1222.8046380984822, 811.0329354546556, 511.7795012804498, 976.456252068188,24.758130975788,24.832657292941] 
+    # MEANS = [3211.0983403106256, 2473.9249186805423, 1675.3644890560977, 4335.811473646549,789.30445481992, 788.94334968111] 
+    # SDS = [1222.8046380984822, 811.0329354546556, 511.7795012804498, 976.456252068188,24.758130975788,24.832657292941] 
+    MEANS = [3000] 
+    SDS = [1000] 
 
     transform = DataAugmentationDINOTorchgeo(
         args.global_crops_scale,
@@ -295,29 +302,38 @@ def train_dino(args):
         dataset_std = SDS
     )
 
-    
     class Raster(RasterDataset):
         filename_glob = args.filename_glob
         is_image = True
         # all_bands=args.all_bands
 
-    dataset = Raster(args.file_path)
+    dataset1 = Raster('/home/ptresson/congo/panchro_congo_all_renamed/A')
+    dataset2 = Raster('/home/ptresson/congo/panchro_congo_all_renamed/B')
 
-    dataset.transforms = transforms
+    dataset1.transforms = transform
+    dataset2.transforms = transform
 
-    bb = dataset.index.bounds
+    bb1 = dataset1.index.bounds
+    bb2 = dataset2.index.bounds
+    roi1 = BoundingBox(bb1[0], bb1[1], bb1[2], bb1[3], bb1[4], bb1[5])
+    roi2 = BoundingBox(bb2[0], bb2[1], bb2[2], bb2[3], bb2[4], bb2[5])
 
-    roi = BoundingBox(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
-    sampler = RandomGeoSampler(
-            dataset, 
-            size=(100,100), 
-            length=1000, 
-            roi = roi
+    sampler1 = RandomGeoSampler(
+            dataset1, 
+            size=(args.sample_size,args.sample_size), 
+            length=args.num_samples, 
+            roi=roi1
+            )
+    sampler2 = RandomGeoSampler(
+            dataset2, 
+            size=(args.sample_size,args.sample_size), 
+            length=args.num_samples, 
+            roi=roi2
             )
 
-    data_loader = DataLoader(
-            dataset, 
-            sampler=sampler, 
+    data_loader1 = DataLoader(
+            dataset1, 
+            sampler=sampler1, 
             collate_fn=stack_samples, 
             shuffle=False, 
             batch_size=args.batch_size_per_gpu,
@@ -325,6 +341,23 @@ def train_dino(args):
             pin_memory=True,
             drop_last=True,
             )
+    data_loader2 = DataLoader(
+            dataset2, 
+            sampler=sampler2, 
+            collate_fn=stack_samples, 
+            shuffle=False, 
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            )
+
+    data_loader = merge_dataloaders(data_loader1,data_loader2)
+
+    # for batch in data_loader:
+    #     # print(batch['image'])
+    #     global_crops = batch['global_crops']
+    #     print(global_crops[0][0]['image'].shape)
 
     # data_loader = torch.utils.data.DataLoader(
     #     dataset,
