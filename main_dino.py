@@ -403,38 +403,46 @@ def train_dino(args):
     #     pin_memory=True,
     #     drop_last=True,
     # )
-    print(f"Data loaded: there are {len(dataset)} images.")
+    # print(f"Data loaded: there are {len(dataset)} images.")
 
-    # ============ building student and teacher networks ... ============
-    # we changed the name DeiT-S for ViT-S to avoid confusions
-    args.arch = args.arch.replace("deit", "vit")
-    # if the network is a Vision Transformer (i.e. vit_tiny, vit_small, vit_base)
-    if args.arch in vits.__dict__.keys():
-        student = vits.__dict__[args.arch](
-            patch_size=args.patch_size,
-            drop_path_rate=args.drop_path_rate,  # stochastic depth
-    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    # # ============ building student and teacher networks ... ============
+    # # we changed the name DeiT-S for ViT-S to avoid confusions
+    # args.arch = args.arch.replace("deit", "vit")
+    # # if the network is a Vision Transformer (i.e. vit_tiny, vit_small, vit_base)
+    # if args.arch in vits.__dict__.keys():
+    #     student = vits.__dict__[args.arch](
+    #         patch_size=args.patch_size,
+    #         drop_path_rate=args.drop_path_rate,  # stochastic depth
+    #     )
+    #     teacher = vits.__dict__[args.arch](patch_size=args.patch_size)
+    #     embed_dim = student.embed_dim
+    # # if the network is a XCiT
+    # elif args.arch in torch.hub.list("facebookresearch/xcit:main"):
+    #     student = torch.hub.load('facebookresearch/xcit:main', args.arch,
+    #                              pretrained=False, drop_path_rate=args.drop_path_rate)
+    #     teacher = torch.hub.load('facebookresearch/xcit:main', args.arch, pretrained=False)
+    #     embed_dim = student.embed_dim
+    # # otherwise, we check if the architecture is in torchvision models
+    # elif args.arch in torchvision_models.__dict__.keys():
+    #     student = torchvision_models.__dict__[args.arch]()
+    #     teacher = torchvision_models.__dict__[args.arch]()
+    #     embed_dim = student.fc.weight.shape[1]
+    # else:
+    #     print(f"Unknow architecture: {args.arch}")
 
-        print(arch)
+    student, teacher, embed_dim = get_model(args.arch, len(MEANS), args.drop_path_rate)
 
-        student, teacher, embed_dim = get_model(arch, len(MEANS), args.drop_path_rate, pretrained)
-
-        # multi-crop wrapper handles forward with inputs of different resolutions
-        student = utils.MultiCropWrapper(student, DINOHead(
-            embed_dim,
-            args.out_dim,
-            use_bn=args.use_bn_in_head,
-            norm_last_layer=args.norm_last_layer,
-        ))
-        teacher = utils.MultiCropWrapper(
-            teacher,
-            DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
-        )
-
-        print(student)
-        del student
-
-    sys.exit(1)
+    # multi-crop wrapper handles forward with inputs of different resolutions
+    student = utils.MultiCropWrapper(student, DINOHead(
+        embed_dim,
+        args.out_dim,
+        use_bn=args.use_bn_in_head,
+        norm_last_layer=args.norm_last_layer,
+    ))
+    teacher = utils.MultiCropWrapper(
+        teacher,
+        DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
+    )
 
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = utils.MultiCropWrapper(student, DINOHead(
