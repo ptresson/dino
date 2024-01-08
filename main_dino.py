@@ -576,7 +576,6 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
 
         global_crops = batch['collated_global_crops']
         local_crops = batch['collated_local_crops']
-        print(local_crops.shape)
         global_crops = global_crops.cuda()
         local_crops = local_crops.cuda()
         # update weight decay and learning rate according to their schedule
@@ -657,28 +656,37 @@ class DINOLoss(nn.Module):
         """
         Cross-entropy between softmax outputs of the teacher and student networks.
         """
-        print(student_output.shape)
-        print(teacher_output.shape)
-        student_out = student_output / self.student_temp
-        student_out = student_out.chunk(self.ncrops)
+        # print(student_output.shape)
+        # print(teacher_output.shape)
+        # student_out = student_output / self.student_temp
+        # student_out = student_out.chunk(self.ncrops)
 
         # teacher centering and sharpening
         temp = self.teacher_temp_schedule[epoch]
         teacher_out = F.softmax((teacher_output - self.center) / temp, dim=-1)
         teacher_out = teacher_out.detach().chunk(2)
 
+        # total_loss = 0
+        # n_loss_terms = 0
+        # for iq, q in enumerate(teacher_out):
+        #     for v in range(len(student_out)):
+        #         if v == iq:
+        #             # we skip cases where student and teacher operate on the same view
+        #             continue
+        #         loss = torch.sum(-q * F.log_softmax(student_out[v], dim=-1), dim=-1)
+        #         total_loss += loss.mean()
+        #         n_loss_terms += 1
+        # total_loss /= n_loss_terms
+        # self.update_center(teacher_output)
+        # return total_loss
+
+        # taken from dinov2
         total_loss = 0
-        n_loss_terms = 0
-        for iq, q in enumerate(teacher_out):
-            for v in range(len(student_out)):
-                if v == iq:
-                    # we skip cases where student and teacher operate on the same view
-                    continue
-                loss = torch.sum(-q * F.log_softmax(student_out[v], dim=-1), dim=-1)
-                total_loss += loss.mean()
-                n_loss_terms += 1
-        total_loss /= n_loss_terms
-        self.update_center(teacher_output)
+        for s in student_output:
+            lsm = F.log_softmax(s / self.student_temp, dim=-1)
+            for t in teacher_out:
+                loss = torch.sum(t * lsm, dim=-1)
+                total_loss -= loss.mean()
         return total_loss
 
     @torch.no_grad()
