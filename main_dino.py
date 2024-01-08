@@ -185,7 +185,7 @@ def resnet_first_layer_with_nchan(
 
     return model
 
-def get_model(arch, in_chans, drop_path_rate, pretrained=None, patch_size=16):
+def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
 
     if arch in torch.hub.list("facebookresearch/dino:main"):
         if 'vit' in arch :
