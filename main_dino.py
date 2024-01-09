@@ -308,221 +308,140 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
     return student, teacher, embed_dim
 
 
-def train_dino(args):
-    utils.init_distributed_mode(args)
-    utils.fix_random_seeds(args.seed)
-    print("git:\n  {}\n".format(utils.get_sha()))
-    print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
-    cudnn.benchmark = True
+def train_dino(args, data_loader):
 
-    # ============ preparing data ... ============
+    student, teacher, embed_dim = get_model(args.arch, len(args.mean_dataset), args.drop_path_rate)
 
-    # MEANS = [3211.0983403106256, 2473.9249186805423, 1675.3644890560977, 4335.811473646549,789.30445481992, 788.94334968111] 
-    # SDS = [1222.8046380984822, 811.0329354546556, 511.7795012804498, 976.456252068188,24.758130975788,24.832657292941] 
-    MEANS = [3000] 
-    SDS = [1000] 
-
-    transform = DataAugmentationDINOTorchgeo(
-        args.global_crops_scale,
-        args.local_crops_scale,
-        args.local_crops_number,
-        dataset_mean = MEANS,
-        dataset_std = SDS
+    # multi-crop wrapper handles forward with inputs of different resolutions
+    student = utils.MultiCropWrapper(student, DINOHead(
+        embed_dim,
+        args.out_dim,
+        use_bn=args.use_bn_in_head,
+        norm_last_layer=args.norm_last_layer,
+    ))
+    teacher = utils.MultiCropWrapper(
+        teacher,
+        DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
     )
 
-    class Raster(RasterDataset):
-        filename_glob = args.filename_glob
-        is_image = True
-        # all_bands=args.all_bands
-
-    dataset1 = Raster('/home/ptresson/congo/panchro_congo_all_renamed/A')
-    dataset2 = Raster('/home/ptresson/congo/panchro_congo_all_renamed/B')
-
-    dataset1.transforms = transform
-    dataset2.transforms = transform
-
-    bb1 = dataset1.index.bounds
-    bb2 = dataset2.index.bounds
-    roi1 = BoundingBox(bb1[0], bb1[1], bb1[2], bb1[3], bb1[4], bb1[5])
-    roi2 = BoundingBox(bb2[0], bb2[1], bb2[2], bb2[3], bb2[4], bb2[5])
-
-    sampler1 = RandomGeoSampler(
-            dataset1, 
-            size=(args.sample_size,args.sample_size), 
-            length=args.num_samples, 
-            roi=roi1
-            )
-    sampler2 = RandomGeoSampler(
-            dataset2, 
-            size=(args.sample_size,args.sample_size), 
-            length=args.num_samples, 
-            roi=roi2
-            )
-
-    collate_fn = partial(
-        collate_data_and_cast_torchgeo,            #_torchgeo
+    # multi-crop wrapper handles forward with inputs of different resolutions
+    student = utils.MultiCropWrapper(student, DINOHead(
+        embed_dim,
+        args.out_dim,
+        use_bn=args.use_bn_in_head,
+        norm_last_layer=args.norm_last_layer,
+    ))
+    teacher = utils.MultiCropWrapper(
+        teacher,
+        DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
     )
 
-    data_loader1 = DataLoader(
-            dataset1, 
-            sampler=sampler1, 
-            collate_fn=collate_fn, 
-            shuffle=False, 
-            batch_size=args.batch_size_per_gpu,
-            num_workers=args.num_workers,
-            pin_memory=True,
-            drop_last=True,
-            )
-    data_loader2 = DataLoader(
-            dataset2, 
-            sampler=sampler2, 
-            collate_fn=collate_fn, 
-            shuffle=False, 
-            batch_size=args.batch_size_per_gpu,
-            num_workers=args.num_workers,
-            pin_memory=True,
-            drop_last=True,
-            )
+    # move networks to gpu
+    student, teacher = student.cuda(), teacher.cuda()
+    # synchronize batch norms (if any)
+    if utils.has_batchnorms(student):
+        student = nn.SyncBatchNorm.convert_sync_batchnorm(student)
+        teacher = nn.SyncBatchNorm.convert_sync_batchnorm(teacher)
 
-    data_loader=MergedDataLoader(data_loader1, data_loader2)
+        # we need DDP wrapper to have synchro batch norms working...
+        teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[args.gpu])
+        teacher_without_ddp = teacher.module
+    else:
+        # teacher_without_ddp and teacher are the same thing
+        teacher_without_ddp = teacher
+    student = nn.parallel.DistributedDataParallel(student, device_ids=[args.gpu])
+    # teacher and student start with the same weights
+    teacher_without_ddp.load_state_dict(student.module.state_dict())
+    # there is no backpropagation through the teacher, so no need for gradients
+    for p in teacher.parameters():
+        p.requires_grad = False
+    print(f"Student and Teacher are built: they are both {args.arch} network.")
 
-    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
-        args.output_dir = f'./logs/{arch}' 
-        args.arch = arch
-        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    # ============ preparing loss ... ============
+    dino_loss = DINOLoss(
+        args.out_dim,
+        args.local_crops_number + 2,  # total number of crops = 2 global crops + local_crops_number
+        args.warmup_teacher_temp,
+        args.teacher_temp,
+        args.warmup_teacher_temp_epochs,
+        args.epochs,
+    ).cuda()
 
-        student, teacher, embed_dim = get_model(args.arch, len(MEANS), args.drop_path_rate)
+    # ============ preparing optimizer ... ============
+    params_groups = utils.get_params_groups(student)
+    if args.optimizer == "adamw":
+        optimizer = torch.optim.AdamW(params_groups)  # to use with ViTs
+    elif args.optimizer == "sgd":
+        optimizer = torch.optim.SGD(params_groups, lr=0, momentum=0.9)  # lr is set by scheduler
+    elif args.optimizer == "lars":
+        optimizer = utils.LARS(params_groups)  # to use with convnet and large batches
+    # for mixed precision training
+    fp16_scaler = None
+    if args.use_fp16:
+        fp16_scaler = torch.cuda.amp.GradScaler()
 
-        # multi-crop wrapper handles forward with inputs of different resolutions
-        student = utils.MultiCropWrapper(student, DINOHead(
-            embed_dim,
-            args.out_dim,
-            use_bn=args.use_bn_in_head,
-            norm_last_layer=args.norm_last_layer,
-        ))
-        teacher = utils.MultiCropWrapper(
-            teacher,
-            DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
-        )
+    # ============ init schedulers ... ============
+    lr_schedule = utils.cosine_scheduler(
+        args.lr * (args.batch_size_per_gpu * utils.get_world_size()) / 256.,  # linear scaling rule
+        args.min_lr,
+        args.epochs, len(data_loader),
+        warmup_epochs=args.warmup_epochs,
+    )
+    wd_schedule = utils.cosine_scheduler(
+        args.weight_decay,
+        args.weight_decay_end,
+        args.epochs, len(data_loader),
+    )
+    # momentum parameter is increased to 1. during training with a cosine schedule
+    momentum_schedule = utils.cosine_scheduler(args.momentum_teacher, 1,
+                                               args.epochs, len(data_loader))
+    print(f"Loss, optimizer and schedulers ready.")
 
-        # multi-crop wrapper handles forward with inputs of different resolutions
-        student = utils.MultiCropWrapper(student, DINOHead(
-            embed_dim,
-            args.out_dim,
-            use_bn=args.use_bn_in_head,
-            norm_last_layer=args.norm_last_layer,
-        ))
-        teacher = utils.MultiCropWrapper(
-            teacher,
-            DINOHead(embed_dim, args.out_dim, args.use_bn_in_head),
-        )
+    # ============ optionally resume training ... ============
+    to_restore = {"epoch": 0}
+    utils.restart_from_checkpoint(
+        os.path.join(args.output_dir, "checkpoint.pth"),
+        run_variables=to_restore,
+        student=student,
+        teacher=teacher,
+        optimizer=optimizer,
+        fp16_scaler=fp16_scaler,
+        dino_loss=dino_loss,
+    )
+    start_epoch = to_restore["epoch"]
 
-        # move networks to gpu
-        student, teacher = student.cuda(), teacher.cuda()
-        # synchronize batch norms (if any)
-        if utils.has_batchnorms(student):
-            student = nn.SyncBatchNorm.convert_sync_batchnorm(student)
-            teacher = nn.SyncBatchNorm.convert_sync_batchnorm(teacher)
+    start_time = time.time()
+    print("Starting DINO training !")
+    for epoch in range(start_epoch, args.epochs):
+        # data_loader.sampler.set_epoch(epoch)
 
-            # we need DDP wrapper to have synchro batch norms working...
-            teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[args.gpu])
-            teacher_without_ddp = teacher.module
-        else:
-            # teacher_without_ddp and teacher are the same thing
-            teacher_without_ddp = teacher
-        student = nn.parallel.DistributedDataParallel(student, device_ids=[args.gpu])
-        # teacher and student start with the same weights
-        teacher_without_ddp.load_state_dict(student.module.state_dict())
-        # there is no backpropagation through the teacher, so no need for gradients
-        for p in teacher.parameters():
-            p.requires_grad = False
-        print(f"Student and Teacher are built: they are both {args.arch} network.")
+        # ============ training one epoch of DINO ... ============
+        train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
+            data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
+            epoch, fp16_scaler, args)
 
-        # ============ preparing loss ... ============
-        dino_loss = DINOLoss(
-            args.out_dim,
-            args.local_crops_number + 2,  # total number of crops = 2 global crops + local_crops_number
-            args.warmup_teacher_temp,
-            args.teacher_temp,
-            args.warmup_teacher_temp_epochs,
-            args.epochs,
-        ).cuda()
-
-        # ============ preparing optimizer ... ============
-        params_groups = utils.get_params_groups(student)
-        if args.optimizer == "adamw":
-            optimizer = torch.optim.AdamW(params_groups)  # to use with ViTs
-        elif args.optimizer == "sgd":
-            optimizer = torch.optim.SGD(params_groups, lr=0, momentum=0.9)  # lr is set by scheduler
-        elif args.optimizer == "lars":
-            optimizer = utils.LARS(params_groups)  # to use with convnet and large batches
-        # for mixed precision training
-        fp16_scaler = None
-        if args.use_fp16:
-            fp16_scaler = torch.cuda.amp.GradScaler()
-
-        # ============ init schedulers ... ============
-        lr_schedule = utils.cosine_scheduler(
-            args.lr * (args.batch_size_per_gpu * utils.get_world_size()) / 256.,  # linear scaling rule
-            args.min_lr,
-            args.epochs, len(data_loader),
-            warmup_epochs=args.warmup_epochs,
-        )
-        wd_schedule = utils.cosine_scheduler(
-            args.weight_decay,
-            args.weight_decay_end,
-            args.epochs, len(data_loader),
-        )
-        # momentum parameter is increased to 1. during training with a cosine schedule
-        momentum_schedule = utils.cosine_scheduler(args.momentum_teacher, 1,
-                                                   args.epochs, len(data_loader))
-        print(f"Loss, optimizer and schedulers ready.")
-
-        # ============ optionally resume training ... ============
-        to_restore = {"epoch": 0}
-        utils.restart_from_checkpoint(
-            os.path.join(args.output_dir, "checkpoint.pth"),
-            run_variables=to_restore,
-            student=student,
-            teacher=teacher,
-            optimizer=optimizer,
-            fp16_scaler=fp16_scaler,
-            dino_loss=dino_loss,
-        )
-        start_epoch = to_restore["epoch"]
-
-        start_time = time.time()
-        print("Starting DINO training !")
-        for epoch in range(start_epoch, args.epochs):
-            # data_loader.sampler.set_epoch(epoch)
-
-            # ============ training one epoch of DINO ... ============
-            train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
-                data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
-                epoch, fp16_scaler, args)
-
-            # ============ writing logs ... ============
-            save_dict = {
-                'student': student.state_dict(),
-                'teacher': teacher.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'epoch': epoch + 1,
-                'args': args,
-                'dino_loss': dino_loss.state_dict(),
-            }
-            if fp16_scaler is not None:
-                save_dict['fp16_scaler'] = fp16_scaler.state_dict()
-            utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
-            if args.saveckp_freq and epoch % args.saveckp_freq == 0:
-                utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint{epoch:04}.pth'))
-            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                         'epoch': epoch}
-            if utils.is_main_process():
-                with (Path(args.output_dir) / "log.txt").open("a") as f:
-                    f.write(json.dumps(log_stats) + "\n")
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('Training time {}'.format(total_time_str))
+        # ============ writing logs ... ============
+        save_dict = {
+            'student': student.state_dict(),
+            'teacher': teacher.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'epoch': epoch + 1,
+            'args': args,
+            'dino_loss': dino_loss.state_dict(),
+        }
+        if fp16_scaler is not None:
+            save_dict['fp16_scaler'] = fp16_scaler.state_dict()
+        utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
+        if args.saveckp_freq and epoch % args.saveckp_freq == 0:
+            utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint{epoch:04}.pth'))
+        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                     'epoch': epoch}
+        if utils.is_main_process():
+            with (Path(args.output_dir) / "log.txt").open("a") as f:
+                f.write(json.dumps(log_stats) + "\n")
+    total_time = time.time() - start_time
+    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    print('Training time {}'.format(total_time_str))
 
 
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
@@ -759,8 +678,87 @@ class DataAugmentationDINOTorchgeo(object):
 
         return output
 
+def prepare_congo_data(args):
+
+    transform = DataAugmentationDINOTorchgeo(
+        args.global_crops_scale,
+        args.local_crops_scale,
+        args.local_crops_number,
+        dataset_mean = args.mean_dataset,
+        dataset_std = args.sd_dataset,
+    )
+
+    class Raster(RasterDataset):
+        filename_glob = args.filename_glob
+        is_image = True
+
+    dataset1 = Raster(os.path.join(args.data_path,'A'))
+    dataset2 = Raster(os.path.join(args.data_path,'B'))
+
+    dataset1.transforms = transform
+    dataset2.transforms = transform
+
+    bb1 = dataset1.index.bounds
+    bb2 = dataset2.index.bounds
+    roi1 = BoundingBox(bb1[0], bb1[1], bb1[2], bb1[3], bb1[4], bb1[5])
+    roi2 = BoundingBox(bb2[0], bb2[1], bb2[2], bb2[3], bb2[4], bb2[5])
+
+    sampler1 = RandomGeoSampler(
+            dataset1, 
+            size=(args.sample_size,args.sample_size), 
+            length=args.num_samples, 
+            roi=roi1
+            )
+    sampler2 = RandomGeoSampler(
+            dataset2, 
+            size=(args.sample_size,args.sample_size), 
+            length=args.num_samples, 
+            roi=roi2
+            )
+
+    collate_fn = partial(
+        collate_data_and_cast_torchgeo,
+    )
+
+    data_loader1 = DataLoader(
+            dataset1, 
+            sampler=sampler1, 
+            collate_fn=collate_fn, 
+            shuffle=False, 
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            )
+    data_loader2 = DataLoader(
+            dataset2, 
+            sampler=sampler2, 
+            collate_fn=collate_fn, 
+            shuffle=False, 
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            )
+
+    data_loader=MergedDataLoader(data_loader1, data_loader2)
+
+    return data_loader
+
 if __name__ == '__main__':
+
     parser = argparse.ArgumentParser('DINO', parents=[get_args_parser()])
     args = parser.parse_args()
-    # Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    train_dino(args)
+    utils.init_distributed_mode(args)
+    utils.fix_random_seeds(args.seed)
+    print("git:\n  {}\n".format(utils.get_sha()))
+    print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
+    cudnn.benchmark = True
+
+    data_loader = prepare_congo_data(args)
+
+    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+        args.output_dir = f'./logs/{arch}' 
+        args.arch = arch
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        train_dino(args, data_loader)
