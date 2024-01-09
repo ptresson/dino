@@ -389,14 +389,8 @@ def train_dino(args):
             drop_last=True,
             )
 
-    # data_loader = merge_dataloaders(data_loader1,data_loader2)
     data_loader=MergedDataLoader(data_loader1, data_loader2)
-    # len_dataloader = len(data_loader1) + len(data_loader2)
 
-    # for batch in data_loader:
-    #     # print(batch['image'])
-    #     global_crops = batch['global_crops']
-    #     print(global_crops[0][0]['image'].shape)
 
     # data_loader = torch.utils.data.DataLoader(
     #     dataset,
