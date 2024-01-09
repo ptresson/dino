@@ -21,6 +21,8 @@ import json
 from pathlib import Path
 import itertools
 from functools import partial
+import warnings
+warnings.filterwarnings("ignore")
 
 import numpy as np
 from PIL import Image
