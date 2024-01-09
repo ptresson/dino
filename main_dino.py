@@ -148,6 +148,8 @@ def get_args_parser():
     parser.add_argument("--file_path", default="./data/tif/", type=str, help="directory containing the raster files")
     parser.add_argument("--sample_size", default=224, type=int, help="size of samples (px) in torchgeo")
     parser.add_argument("--num_samples", default=10_000, type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--mean_dataset", default=[3000], type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--sd_dataset", default=[1000], type=int, help="number of sample for torchgeo sampler")
 
     return parser
 
