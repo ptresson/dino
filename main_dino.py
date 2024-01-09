@@ -613,6 +613,7 @@ class DataAugmentationDINOTorchgeo(object):
                     global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC
                 ),
                 K.RandomHorizontalFlip(p=0.5),
+                K.RandomVerticalFlip(p=0.5),
                 data_keys=["image"]
         )
 
@@ -622,6 +623,7 @@ class DataAugmentationDINOTorchgeo(object):
                     global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC
                 ),
                 K.RandomHorizontalFlip(p=0.5),
+                K.RandomVerticalFlip(p=0.5),
                 data_keys=["image"]
         )
 
