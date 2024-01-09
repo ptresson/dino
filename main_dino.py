@@ -534,8 +534,6 @@ class DINOLoss(nn.Module):
         """
         Cross-entropy between softmax outputs of the teacher and student networks.
         """
-        # print(student_output.shape)
-        # print(teacher_output.shape)
         # student_out = student_output / self.student_temp
         # student_out = student_out.chunk(self.ncrops)
 
@@ -627,33 +625,17 @@ class DataAugmentationDINOTorchgeo(object):
                 data_keys=["image"]
         )
 
-        # IMAGESET_DEFAULT_MEAN = [101.46047364732716]       #TODO : needs to be determined dynamically           #dataset_mean 
-        # IMAGESET_DEFAULT_STD = [18.518984529105996]       #TODO : needs to be determined dynamically            #dataset_std    
-
-        # def make_normalize_transform(
-        #     mean = IMAGESET_DEFAULT_MEAN,
-        #     std = IMAGESET_DEFAULT_STD,
-        # ):
-        #     return Normalize(mean=mean, std=std)            
-    
-        # # normalization
-        # self.normalize = AugmentationSequential(
-        #         make_normalize_transform(),
-        #         data_keys=["image"],
-        # )
-
         # normalization
         self.normalize = AugmentationSequential(
                 Normalize(dataset_mean, dataset_std),
                 data_keys=["image"],
         )
       
-        self.global_transfo1 = AugmentationSequential(GaussianBlur(p=1.0), data_keys=["image"])  #make_normalize_transform(),
+        self.global_transfo1 = AugmentationSequential(GaussianBlur(p=1.0), data_keys=["image"])
         self.global_transfo2 = AugmentationSequential(GaussianBlur(p=0.1), 
                                                        transforms.RandomSolarize(threshold=0, p=0.2), 
-                                                        data_keys=["image"])   #make_normalize_transform(),
-        #self.global_transfo2 = AugmentationSequential(GaussianBlur(p=0.1), K.RandomBrightness(p=0.5), K.RandomInvert(p=0.5), data_keys=["image"])
-        self.local_transfo = AugmentationSequential(GaussianBlur(p=0.5), data_keys=["image"])       #make_normalize_transform(),
+                                                        data_keys=["image"])
+        self.local_transfo = AugmentationSequential(GaussianBlur(p=0.5), data_keys=["image"])
         
 
     def __call__(self, image):
@@ -665,10 +647,8 @@ class DataAugmentationDINOTorchgeo(object):
         global_crop_1 = self.global_transfo1(im1_base)
 
         im2_base = self.geometric_augmentation_global(image)
-        # print('im2 base : ', im2_base)
         global_crop_2 = self.global_transfo2(im2_base)
         output["global_crops"] = [global_crop_1, global_crop_2]
-        # print('output global crops im2 : ', output['global_crops'][1])
         # global crops for teacher:
         output["global_crops_teacher"] = [global_crop_1, global_crop_2]
         # local crops:
