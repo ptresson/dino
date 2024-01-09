@@ -572,9 +572,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                     fp16_scaler, args):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
-    # for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
-    it=0
-    for batch in data_loader:
+    
+    for it, batch in enumerate(metric_logger.log_every(data_loader, 10, header)):
 
         global_crops = batch['collated_global_crops']
         local_crops = batch['collated_local_crops']
