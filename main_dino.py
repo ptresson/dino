@@ -52,38 +52,6 @@ torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
 
-def collate_data_and_cast_torchgeo(
-        samples_list, 
-        ):
-
-    n_global_crops = len(samples_list[0]["global_crops"])
-    n_local_crops = len(samples_list[0]["local_crops"])
-
-    collated_global_crops = torch.stack([s["global_crops"][i]['image'][0] for i in range(n_global_crops) for s in samples_list])
-    collated_local_crops = torch.stack([s["local_crops"][i]['image'][0] for i in range(n_local_crops) for s in samples_list])
-
-    return {
-        "collated_global_crops": collated_global_crops,     #.to(dtype)
-        "collated_local_crops": collated_local_crops,       #.to(dtype)
-    }
-
-
-
-def merge_dataloaders(*itrs):
-    for itr in itrs:
-        for v in itr:
-            yield v
-
-class MergedDataLoader:
-    def __init__(self, *dataloaders):
-        self.dataloaders = dataloaders
-        self.dataset = None  # You may need to define a custom dataset for this
-
-    def __iter__(self):
-        return itertools.chain(*[iter(dataloader) for dataloader in self.dataloaders])
-
-    def __len__(self):
-        return sum(len(dataloader) for dataloader in self.dataloaders)
 
 
 def get_args_parser():
@@ -184,6 +152,32 @@ def get_args_parser():
     return parser
 
 
+def collate_data_and_cast_torchgeo(samples_list):
+
+    n_global_crops = len(samples_list[0]["global_crops"])
+    n_local_crops = len(samples_list[0]["local_crops"])
+
+    collated_global_crops = torch.stack([s["global_crops"][i]['image'][0] for i in range(n_global_crops) for s in samples_list])
+    collated_local_crops = torch.stack([s["local_crops"][i]['image'][0] for i in range(n_local_crops) for s in samples_list])
+
+    return {
+        "collated_global_crops": collated_global_crops,     #.to(dtype)
+        "collated_local_crops": collated_local_crops,       #.to(dtype)
+    }
+
+
+class MergedDataLoader:
+    def __init__(self, *dataloaders):
+        self.dataloaders = dataloaders
+        self.dataset = None  # You may need to define a custom dataset for this
+
+    def __iter__(self):
+        return itertools.chain(*[iter(dataloader) for dataloader in self.dataloaders])
+
+    def __len__(self):
+        return sum(len(dataloader) for dataloader in self.dataloaders)
+
+
 def vit_first_layer_with_nchan(
         model,
         in_chans=1,
@@ -222,6 +216,7 @@ def resnet_first_layer_with_nchan(
     model.conv1 = new_conv
 
     return model
+
 
 def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
 
