@@ -577,8 +577,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
 
         global_crops = batch['collated_global_crops']
         local_crops = batch['collated_local_crops']
-        global_crops = global_crops.cuda()
-        local_crops = local_crops.cuda()
+        global_crops = global_crops.cuda(non_blocking=True)
+        local_crops = local_crops.cuda(non_blocking=True)
         # update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration
 
