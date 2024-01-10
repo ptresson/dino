@@ -136,7 +136,7 @@ def get_args_parser():
     parser.add_argument('--data_path', default='/home/ptresson/congo/panchro_congo_all_renamed', type=str,
         help='Please specify path to the ImageNet training data.')
     parser.add_argument('--output_dir', default="./logs/", type=str, help='Path to save logs and checkpoints.')
-    parser.add_argument('--saveckp_freq', default=40, type=int, help='Save checkpoint every x epochs.')
+    parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
@@ -148,8 +148,8 @@ def get_args_parser():
     parser.add_argument("--file_path", default="./data/tif/", type=str, help="directory containing the raster files")
     parser.add_argument("--sample_size", default=224, type=int, help="size of samples (px) in torchgeo")
     parser.add_argument("--num_samples", default=10_000, type=int, help="number of sample for torchgeo sampler")
-    parser.add_argument("--mean_dataset", default=[3000], type=int, help="number of sample for torchgeo sampler")
-    parser.add_argument("--sd_dataset", default=[1000], type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--mean_dataset", default=[558.03], type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--sd_dataset", default=[89.63], type=int, help="number of sample for torchgeo sampler")
 
     return parser
 
