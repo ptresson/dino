@@ -42,6 +42,7 @@ from torchgeo.samplers import RandomGeoSampler, GridGeoSampler
 from torchgeo.transforms import AugmentationSequential
 import kornia.augmentation as K
 from kornia.enhance.normalize import Normalize
+import rasterio
 
 import utils
 import vision_transformer as vits
@@ -51,7 +52,6 @@ from vision_transformer import DINOHead
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
-
 
 
 def get_args_parser():
@@ -308,6 +308,7 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
             embed_dim = student.embed_dim
 
     return student, teacher, embed_dim
+
 
 
 def train_dino(args, data_loader):
@@ -729,6 +730,101 @@ def prepare_congo_data(args):
 
     return data_loader
 
+
+def get_mean_sd_by_band_gdal(tif, ignore_zeros=True):
+    import subprocess
+    import re
+
+    # Run the gdalinfo command and capture the output
+    command = f'gdalinfo -mm -stats {tif}'
+    result = subprocess.run(command, stdout=subprocess.PIPE, text=True, shell=True)
+
+    # Extract the STATISTICS_MEAN value using regex
+    mean_match = re.search(r'STATISTICS_MEAN=([\d.]+)', result.stdout)
+    mean_value = float(mean_match.group(1))
+    sd_match = re.search(r'STATISTICS_STDDEV=([\d.]+)', result.stdout)
+    sd_value = float(sd_match.group(1))
+
+    return mean_value, sd_value
+
+
+def get_mean_sd_by_band(tif, ignore_zeros=True):
+    '''
+    reads metadata or computes mean and sd of each band of a geotif
+    '''
+
+    src = rasterio.open(tif)
+    means = []
+    sds = []
+    npx = src.width * src.height
+
+    for band in range(1, src.count+1):
+
+        if src.tags(band) != {}: # if metadata are available
+            try:
+                mean = src.tags(band)['STATISTICS_MEAN']
+                sd = src.tags(band)['STATISTICS_STDDEV']
+            except (KeyError, IndexError):
+                mean, sd = get_mean_sd_by_band_gdal(tif)
+
+        else: # if not, just compute it
+            if ignore_zeros:
+                arr = src.read(band)
+                mean = np.ma.masked_equal(arr, 0).mean()
+                sd = np.ma.masked_equal(arr, 0).std()
+                del arr # cleanup memory in doubt
+
+            else:    
+                arr = src.read(band)
+                mean = np.mean(arr)
+                sd = np.std(arr)
+                del arr # cleanup memory in doubt
+
+        means.append(float(mean))
+        sds.append(float(sd))
+        npx
+
+    src.close()
+    return  means, sds, npx
+
+def get_dataset_mean_sd(args):
+
+    pathA = os.path.join(args.data_path,'A/')
+    pathB = os.path.join(args.data_path,'B/')
+    filesA = [os.path.join(pathA, f) for f in os.listdir(pathA) if f.lower().endswith(('.tif','tiff'))]
+    filesB = [os.path.join(pathB, f) for f in os.listdir(pathB) if f.lower().endswith(('.tif','tiff'))]
+    files = filesA + filesB
+    files = [f for f in files if not f.endswith(('8B.tif','4A.tif'))] # have saturated pixels that change the distribution
+
+    tot_means = []
+    tot_sds = []
+    tot_npx = []
+
+    for file in files:
+        print(file)
+        means, sds, npx = get_mean_sd_by_band(file)
+        print(means, sds, npx)
+        tot_means.append(means[0])
+        tot_sds.append(sds[0])
+        tot_npx.append(npx)
+
+    tot_means = np.array(tot_means)
+    tot_sds = np.array(tot_sds)
+    tot_npx = np.array(tot_npx)
+
+    # Compute weighted mean
+    weighted_mean = np.sum(tot_means * tot_npx) / np.sum(tot_npx)
+
+    # Compute weighted standard deviation
+    weighted_sd = np.sqrt(np.sum(tot_npx * (tot_sds ** 2 + (tot_means - weighted_mean) ** 2)) / np.sum(tot_npx))
+
+    print("Weighted Mean:", weighted_mean)
+    print("Weighted Standard Deviation:", weighted_sd)
+
+
+
+    sys.exit(1)
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser('DINO', parents=[get_args_parser()])
@@ -738,6 +834,9 @@ if __name__ == '__main__':
     print("git:\n  {}\n".format(utils.get_sha()))
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
+
+    ## Operation is done one time and then hardcoded here
+    # get_dataset_mean_sd(args)
 
     data_loader = prepare_congo_data(args)
 
