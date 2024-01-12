@@ -47,13 +47,12 @@ from main_dino import MergedDataLoader
 
 
 def fit_proj(
-        dataset,
         model,
         cls_token=False,
         feat_dim=1024,
         batch_size=10,
         exclude_value=-77.04,
-        nsamples=100,
+        nsamples=1_000,
         size=224,
         patch_h=100,
         patch_w=100,
@@ -106,19 +105,20 @@ def fit_proj(
             (default: 8)
     """
 
-    # If ROI is smaller than the full dataset
-    if roi:
-        sampler = RandomGeoSampler(dataset, size=size, length=nsamples, roi=roi)
-    else:
-        sampler = RandomGeoSampler(dataset, size=size, length=nsamples)
+    # # If ROI is smaller than the full dataset
+    # if roi:
+    #     sampler = RandomGeoSampler(dataset, size=size, length=nsamples, roi=roi)
+    # else:
+    #     sampler = RandomGeoSampler(dataset, size=size, length=nsamples)
 
-    dataloader = DataLoader(
-        dataset, 
-        sampler=sampler, 
-        collate_fn=stack_samples, 
-        shuffle=False, 
-        batch_size=batch_size
-    )
+    # dataloader = DataLoader(
+    #     dataset, 
+    #     sampler=sampler, 
+    #     collate_fn=stack_samples, 
+    #     shuffle=False, 
+    #     batch_size=batch_size
+    # )
+    dataloader = prepare_congo_data_proj(size=size, nsamples=nsamples)
 
     feat_img = None  # Initialize the feature tensor
 
@@ -415,81 +415,75 @@ def inf_cluster(
 
     return labels, bboxes
 
-
-
-if __name__ == "__main__":
-    
-    ## Example workflow
-    import os
-    import tempfile
-    from torchgeo.datasets import NAIP
-    from torchgeo.datasets.utils import download_url
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    naip_root = os.path.join(tempfile.gettempdir(), "naip")
-    proj_dir = os.path.join(tempfile.gettempdir(), "proj")
-    proj_dir = os.path.expanduser(proj_dir)
-    os.makedirs(proj_dir, exist_ok=True)
-
-    naip_url = (
-        "https://naipeuwest.blob.core.windows.net/naip/v002/de/2018/de_060cm_2018/38075/"
-    )
-
-    # tile may not download properly, leading to a `TIFFReadEncodedTile() failed` error
-    # a simple wget with this url probably will solve the issue
-    tile = "m_3807511_ne_18_060_20181104.tif"
-    download_url(naip_url + tile, naip_root)
-
-
-    dataset = NAIP(naip_root)
-
-    MEANS = [122.39, 118.23, 98.1, 120]
-    SDS = [39.81, 37.33, 33.04, 30]
-
-    # take pretrained model and adapt number of input bands if needed
-    model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
-    model = vit_first_layer_with_nchan(model, in_chans=len(MEANS))
+def prepare_congo_data_proj(
+        data_path='/home/ptresson/congo/panchro_congo_all_renamed', 
+        means=[558.03], 
+        sds=[89.63], 
+        size=224, 
+        nsamples=500,
+        batch_size=50,
+        ):
 
     transform = AugmentationSequential(
-            T.ConvertImageDtype(torch.float32), # change dtype for normalize to be possible
-            K.Normalize(MEANS,SDS), # normalize occurs only on raster, not mask
-            K.Resize((224, 224)),  # resize to 224*224 pixels, regardless of sampling size
+            K.Resize(size, resample=Resample.BICUBIC.name),
+            Normalize(means, sds),
             data_keys=["image"],
+    )
+
+    class Raster(RasterDataset):
+        filename_glob = '*.tif'
+        is_image = True
+
+    dataset1 = Raster(os.path.join(data_path,'A'))
+    dataset2 = Raster(os.path.join(data_path,'B'))
+
+    dataset1.transforms = transform
+    dataset2.transforms = transform
+
+    bb1 = dataset1.index.bounds
+    bb2 = dataset2.index.bounds
+    roi1 = BoundingBox(bb1[0], bb1[1], bb1[2], bb1[3], bb1[4], bb1[5])
+    roi2 = BoundingBox(bb2[0], bb2[1], bb2[2], bb2[3], bb2[4], bb2[5])
+
+    sampler1 = RandomGeoSampler(
+            dataset1, 
+            size=(size,size), 
+            length=nsamples, 
+            roi=roi1
             )
-    dataset.transforms = transform
-
-    model.to(device)
-    size = 224
-
-    """
-    example, fit a UMAP projection of this dataset through the model.
-    The 768 dimension of the models feature space are reduced to 3 dimensions.
-    5 neighbors are used for computation meaning a more local approximation of the manifold
-    but less computation time that the default 15 (values should typically be between 2 and 100)
-    Only 100 random samples are used to fit the projection rather than the entire dataset
-    depending on available RAM and CPU, UMAP computation may take a while
-
-    """
-
-    print("Fit projection\n")
-    fit_proj(
-            dataset,
-            model,
-            size=size,
-            nsamples=100,
-            feat_dim=768,
-            exclude_value=None,
-            patch_w=16, 
-            patch_h=16,
-            method='umap',
-            n_neighbors=20,
-            cls_token=False,
-            roi=None,
-            batch_size=50,
-            out_path_proj_model=f'{proj_dir}/proj.pkl'
+    sampler2 = RandomGeoSampler(
+            dataset2, 
+            size=(size,size), 
+            length=nsamples, 
+            roi=roi2
             )
 
+    data_loader1 = DataLoader(
+            dataset1, 
+            sampler=sampler1, 
+            collate_fn=stack_samples, 
+            shuffle=False, 
+            batch_size=batch_size,
+            num_workers=10,
+            pin_memory=True,
+            drop_last=True,
+            )
+    data_loader2 = DataLoader(
+            dataset2, 
+            sampler=sampler2, 
+            collate_fn=stack_samples, 
+            shuffle=False, 
+            batch_size=batch_size,
+            num_workers=10,
+            pin_memory=True,
+            drop_last=True,
+            )
 
+    data_loader=MergedDataLoader(data_loader1, data_loader2)
+
+    return data_loader
+
+if __name__ == "__main__":
     """
     Inference of the fitted projection on the datatset following a grid.
     This results to a numpy array with pixels that are encompassing 
