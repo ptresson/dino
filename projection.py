@@ -31,9 +31,11 @@ from torchgeo.samplers.constants import Units
 # geo
 import geopandas as gpd
 import rasterio
+from shapely.geometry import Polygon
 
 # data
 import numpy as np
+import pandas as pd
 from sklearn.decomposition import PCA
 import umap.umap_ as umap
 from sklearn.cluster import KMeans
@@ -726,6 +728,8 @@ def prepare_shp_data(
             rois=rois
             )
 
+    print(f'sampler : {len(sampler)}')
+
     dataloader = DataLoader(
             dataset, 
             sampler=sampler, 
@@ -739,6 +743,97 @@ def prepare_shp_data(
 
     return dataloader, gdf
 
+def inf_proj_rois(model, dataloader, path_proj_model):
+    
+    embedder = joblib.load(path_proj_model)
+
+    bboxes=[]
+    projs=[]
+    i=0
+
+    print(f'dataloader:{len(dataloader)}')
+    for batch in dataloader:
+        # print(f"{i / len(dataloader):.2%}", end="\r")
+
+        images = batch['image']
+        if len(images.shape) > 4:
+            images = images.squeeze(1)
+        images = images.type(torch.float)
+        images = images.cuda()
+
+        # Extract bounding boxes for each sample
+        for sample in unbind_samples(batch):
+            bboxes.append(sample['bbox'])
+
+        with torch.no_grad():
+            features = model(images)
+            features = features.detach().cpu().numpy()
+            proj = embedder.transform(features)
+            projs.extend(proj)
+
+        i+=1
+
+    return bboxes, projs
+
+def inf_clust_rois(model, dataloader, path_proj_model):
+    
+    embedder = joblib.load(path_proj_model)
+
+    bboxes=[]
+    projs=[]
+    i=0
+
+    print(f'dataloader:{len(dataloader)}')
+    for batch in dataloader:
+        # print(f"{i / len(dataloader):.2%}", end="\r")
+
+        images = batch['image']
+        if len(images.shape) > 4:
+            images = images.squeeze(1)
+        images = images.type(torch.float)
+        images = images.cuda()
+
+        # Extract bounding boxes for each sample
+        for sample in unbind_samples(batch):
+            bboxes.append(sample['bbox'])
+
+        with torch.no_grad():
+            features = model(images)
+            features = features.detach().cpu().numpy()
+            proj = embedder.predict(features)
+            projs.extend(proj)
+
+        i+=1
+
+    return bboxes, projs
+
+
+def create_bbox_shp(long0, lat0, lat1, long1):
+    return Polygon([[long0, lat0], [long1, lat0], [long1, lat1], [long0, lat1]])
+
+def export_on_map(
+        labels, 
+        bboxes, 
+        crs, 
+        out_path='out/test.shp',
+        ):  
+
+    fullpathname_cluster_shp = os.path.join(os.getcwd(), out_path)
+
+    bboxes_shp = [create_bbox_shp(bboxes[i][0], 
+                                  bboxes[i][2], 
+                                  bboxes[i][3], 
+                                  bboxes[i][1]
+                                  ) for i in range(len(bboxes))]
+    labels_shp = labels
+    d = {'label': labels_shp, 'geometry': bboxes_shp}
+    gdf = gpd.GeoDataFrame(d, crs = crs)
+    gdf = gdf[gdf['label'] != -1]
+
+    gdf.to_file(fullpathname_cluster_shp, driver='ESRI Shapefile')
+
+def split_coordinates(coord_array,x_name ='x', y_name='y'):
+    return pd.Series({x_name: coord_array[0],y_name: coord_array[1]})
 
 if __name__ == "__main__":
     
@@ -751,7 +846,7 @@ if __name__ == "__main__":
     #     model = load_weights(model, checkpoint_path)
     #     model.to(device)
 
-    #     print("Fit projection\n")
+    #     print("Fit UMAP\n")
     #     fit_proj(
     #             model,
     #             size=224,
@@ -765,59 +860,82 @@ if __name__ == "__main__":
     #             cls_token=True,
     #             roi=None,
     #             batch_size=16,
-    #             out_path_proj_model=f'./projs/{arch}.pkl'
+    #             out_path_proj_model=f'./projs/umap/{arch}.pkl',
+    #             n_components=2
     #             )
 
-    dataloader = prepare_shp_data()
+    #     print("Fit PCA\n")
+    #     fit_proj(
+    #             model,
+    #             size=224,
+    #             nsamples=1_000,
+    #             feat_dim=embed_dim,
+    #             exclude_value=None,
+    #             patch_w=16, 
+    #             patch_h=16,
+    #             method='pca',
+    #             n_neighbors=20,
+    #             cls_token=True,
+    #             roi=None,
+    #             batch_size=16,
+    #             out_path_proj_model=f'./projs/pca/{arch}.pkl',
+    #             n_components=2
+    #             )
+
+    #     print("Fit Kmeans\n")
+    #     fit_proj(
+    #             model,
+    #             size=224,
+    #             nsamples=1_000,
+    #             feat_dim=embed_dim,
+    #             exclude_value=None,
+    #             patch_w=16, 
+    #             patch_h=16,
+    #             method='kmeans',
+    #             n_neighbors=20,
+    #             cls_token=True,
+    #             roi=None,
+    #             batch_size=16,
+    #             out_path_proj_model=f'./projs/kmeans/{arch}.pkl',
+    #             )
+
+
+    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+
+        for step in ['0000','0020','0040','0060','0080','']:
+            checkpoint_path = f'./logs/{arch}/checkpoint{step}.pth'
+            model, embed_dim = create_template_model(arch, in_chans=1)
+            model = load_weights(model, checkpoint_path)
+            model.to(device)
+
+            dataloader, gdf = prepare_shp_data(batch_size=68)
+            for method in ['umap','pca']:
+                bboxes, projs = inf_proj_rois(
+                        model, 
+                        dataloader,
+                        path_proj_model=f'./projs/{method}/{arch}.pkl'
+                        )
+
+                rdf = gpd.GeoDataFrame(list(zip(bboxes, projs)), columns=['bboxes', 'projs'])
+                gdf = gdf.merge(rdf, on='bboxes')
+                gdf[[f'x_{method}', f'y_{method}']] = gdf['projs'].apply(
+                        lambda x: split_coordinates(x, f'x_{method}', f'y_{method}'))
+
+                gdf = gdf.drop('projs', axis=1)
+            for method in ['kmeans']:
+                bboxes, projs = inf_clust_rois(
+                        model, 
+                        dataloader,
+                        path_proj_model=f'./projs/{method}/{arch}.pkl'
+                        )
+
+                rdf = gpd.GeoDataFrame(list(zip(bboxes, projs)), columns=['bboxes', 'kmeans'])
+                gdf = gdf.merge(rdf, on='bboxes')
+
+            gdf = gdf.drop('bboxes', axis=1)
+            gdf.to_file(f'./out/{arch}{step}.shp', driver='ESRI Shapefile')
+            del gdf
+            del dataloader
+        sys.exit(1)
 
     sys.exit(1)
-
-
-    """
-    Inference of the fitted projection on the datatset following a grid.
-    This results to a numpy array with pixels that are encompassing 
-    several pixels in the original image: 
-        - 16x16 pixels when working at patch_token level for a ViT with 16x16 patches
-        - 224x224 when working at cls_token level
-        
-    """
-
-    # Here an example performing inference only 
-    # on the top left corner of the original image
-    print(dataset.bounds)
-    bb=dataset.bounds
-    xlim = bb[0] + (bb[1]-bb[0])*0.25
-    ylim = bb[2] + (bb[3]-bb[2])*0.25
-    roi=BoundingBox(bb[0], xlim, bb[2], ylim, bb[4], bb[5])
-
-    print("Projection inference\n")
-    macro_img, bboxes = inf_proj(
-            dataset,
-            model,
-            roi=roi,
-            size=size,
-            patch_w=16, 
-            patch_h=16,
-            cls_token=False,
-            path_proj_model=f'{proj_dir}/proj.pkl',
-            batch_size=500,
-            )
-
-    ## can be usefull to save progress
-    # np.save(f'{proj_dir}/proj.npy', macro_img)
-
-    numpy_to_geotif(
-            original_image=os.path.join(naip_root,tile),
-            numpy_image=macro_img,
-            dtype='float32',
-            pixel_scale=16,
-            out_path=f'{proj_dir}/proj.tif'
-            )
-
-    # go back to the original spatial resolution if needed
-    with rasterio.open(os.path.join(naip_root,tile)) as template_src:
-        # Get the template resolution
-        orig_resolution = template_src.transform[0]
-
-    change_tif_resolution(f'{proj_dir}/proj.tif',f'{proj_dir}/proj_rescale.tif', orig_resolution)
-
