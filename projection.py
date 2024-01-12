@@ -144,35 +144,39 @@ def fit_proj(
 
         if do_forward:
             with torch.no_grad():
-                if hasattr(model, 'forward_features') and callable(getattr(model, 'forward_features')):
-                    features_dict = model.forward_features(images)
+                # if hasattr(model, 'forward_features') and callable(getattr(model, 'forward_features')):
+                #     features_dict = model.forward_features(images)
 
-                    if cls_token:
-                        try:
-                            feat = features_dict['x_norm_clstoken']
-                        except (KeyError, IndexError):
-                            feat = features_dict
-                        feat = feat.detach().cpu().numpy()
-                        if feat_img is None:
-                            feat_img = feat
-                        feat_img = np.concatenate((feat_img, feat), axis=0)
-                    else:
+                #     if cls_token:
+                #         try:
+                #             feat = features_dict['x_norm_clstoken']
+                #         except (KeyError, IndexError):
+                #             feat = features_dict
+                #             # print(feat.shape)
+                #         feat = feat.detach().cpu().numpy()
+                #         if feat_img is None:
+                #             feat_img = feat
+                #         feat_img = np.concatenate((feat_img, feat), axis=0)
+                #     else:
 
-                        try:
-                            feat = features_dict['x_norm_patchtokens']
-                        except KeyError:
-                            raise NotImplementedError("model architecture does not support patch_tokens inference")
+                #         try:
+                #             feat = features_dict['x_norm_patchtokens']
+                #         except KeyError:
+                #             raise NotImplementedError("model architecture does not support patch_tokens inference")
 
-                        feat = feat.detach().cpu().numpy()
-                        feat = feat.reshape(images.shape[0] * patch_h * patch_w, feat_dim)
-                        if feat_img is None:
-                            feat_img = feat
-                        feat_img = np.concatenate((feat_img, feat), axis=0)
-                else:
-                    feat = model(images)
-                    if feat_img is None:
-                        feat_img = feat
-                    feat_img = np.concatenate((feat_img, feat), axis=0)
+                #         feat = feat.detach().cpu().numpy()
+                #         feat = feat.reshape(images.shape[0] * patch_h * patch_w, feat_dim)
+                #         if feat_img is None:
+                #             feat_img = feat
+                #         feat_img = np.concatenate((feat_img, feat), axis=0)
+                # else:
+                feat = model(images)
+                print(feat.shape)
+                feat = feat.detach().cpu().numpy()
+                # print(feat.shape)
+                if feat_img is None:
+                    feat_img = feat
+                feat_img = np.concatenate((feat_img, feat), axis=0)
 
         i += 1
 
