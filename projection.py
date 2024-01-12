@@ -498,10 +498,10 @@ def create_template_model(arch, in_chans, patch_size=16):
             model = torch.hub.load('facebookresearch/dino:main', arch)
             model = resnet_first_layer_with_nchan(model, in_chans)
 
+        model.fc, model.head = nn.Identity(), nn.Identity()
         # get embed_dim before fully loading model to avoid hardcoding value
         if not hasattr(model, 'embed_dim'):
             x = model(torch.rand(1,in_chans,224,224))
-            model.fc, model.head = nn.Identity(), nn.Identity()
             embed_dim = x.shape[1]
         else:
             embed_dim = model.embed_dim
@@ -513,10 +513,11 @@ def create_template_model(arch, in_chans, patch_size=16):
                 pretrained=True,
                 in_chans=in_chans,
                 )
+        model.reset_classifier(0,'avg')
+
 
         if not hasattr(model, 'embed_dim'):
             x = model(torch.rand(1,in_chans,224,224))
-            model.fc, model.head = nn.Identity(), nn.Identity()
             embed_dim = x.shape[1]
         else:
             embed_dim = model.embed_dim
