@@ -483,7 +483,104 @@ def prepare_congo_data_proj(
 
     return data_loader
 
+def create_template_model(arch, in_chans, patch_size=16):
+
+    if arch in torch.hub.list("facebookresearch/dino:main"):
+        if 'vit' in arch :
+            model = torch.hub.load('facebookresearch/dino:main', arch,
+                                    in_chans=in_chans,
+                                    strict=False,
+                                    pretrained=False,
+                                    )
+
+        if 'resnet' in arch :
+
+            model = torch.hub.load('facebookresearch/dino:main', arch)
+            model = resnet_first_layer_with_nchan(model, in_chans)
+
+        # get embed_dim before fully loading model to avoid hardcoding value
+        if not hasattr(model, 'embed_dim'):
+            x = model(torch.rand(1,in_chans,224,224))
+            model.fc, model.head = nn.Identity(), nn.Identity()
+            embed_dim = x.shape[1]
+        else:
+            embed_dim = model.embed_dim
+
+
+    elif arch in timm.list_models(pretrained=True):
+        model = create_model(
+                arch,
+                pretrained=True,
+                in_chans=in_chans,
+                )
+
+        if not hasattr(model, 'embed_dim'):
+            x = model(torch.rand(1,in_chans,224,224))
+            model.fc, model.head = nn.Identity(), nn.Identity()
+            embed_dim = x.shape[1]
+        else:
+            embed_dim = model.embed_dim
+
+    return model, embed_dim
+
+def load_weights(
+        model, 
+        checkpoint_path ,
+        nchannels=1,
+        patch_size=14, 
+        feat_dim=1024, 
+        pos_embed_size=257, 
+        ):
+
+    # kernel_size = model.patch_embed.proj.kernel_size
+    # stride = model.patch_embed.proj.stride
+    # embed_dim = model.patch_embed.proj.out_channels # corresponds to embed_dim
+    # print(model.pos_embed)
+
+    # model.patch_embed.proj = nn.Conv2d(nchannels, feat_dim, kernel_size=(patch_size, patch_size), stride=(patch_size, patch_size))
+    # model.pos_embed = nn.Parameter(torch.tensor(model.pos_embed[:, :pos_embed_size]))
+
+    checkpoint = torch.load(checkpoint_path)
+    if 'teacher' in checkpoint:
+        d = checkpoint['teacher']
+        d2 = OrderedDict([(k[9:], v) for k, v in d.items() if ('backbone' in k)])
+        model.load_state_dict(d2, strict=False)
+    if 'model' in checkpoint:
+        d = checkpoint['model']
+        d2 = OrderedDict([(k, v) for k, v in d.items() if ('decoder_blocks' not in k)])
+        model.load_state_dict(d2, strict=False)
+
+    return model
+
 if __name__ == "__main__":
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+
+        checkpoint_path = f'./logs/{arch}/checkpoint.pth'
+        model, embed_dim = create_template_model(arch, in_chans=1)
+        model = load_weights(model, checkpoint_path)
+        model.to(device)
+
+        print("Fit projection\n")
+        fit_proj(
+                model,
+                size=224,
+                nsamples=1_000,
+                feat_dim=embed_dim,
+                exclude_value=None,
+                patch_w=16, 
+                patch_h=16,
+                method='umap',
+                n_neighbors=20,
+                cls_token=True,
+                roi=None,
+                batch_size=16,
+                out_path_proj_model=f'./projs/{arch}.pkl'
+                )
+
+
     """
     Inference of the fitted projection on the datatset following a grid.
     This results to a numpy array with pixels that are encompassing 
