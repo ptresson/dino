@@ -1,14 +1,19 @@
 # general
 import warnings
 import joblib
+import glob
 import os
 import sys
 from torch import nn
 from collections import OrderedDict
+from typing import Callable, Iterable, Iterator, Optional, Tuple, Union
+from heapq import nsmallest
+import abc
+from rtree.index import Index, Property
 
 # pytorch
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 import torchvision.transforms as T
 import kornia.augmentation as K
 from kornia.constants import Resample
@@ -17,10 +22,11 @@ import timm
 from timm import create_model
 
 # torchgeo
-from torchgeo.datasets import RasterDataset, BoundingBox, stack_samples, unbind_samples
+from torchgeo.datasets import RasterDataset, BoundingBox, GeoDataset, stack_samples, unbind_samples
 from torchgeo.samplers import RandomGeoSampler, GridGeoSampler
 from torchgeo.samplers.utils import _to_tuple
 from torchgeo.transforms import AugmentationSequential
+from torchgeo.samplers.constants import Units
 
 # geo
 import geopandas as gpd
@@ -44,6 +50,61 @@ from main_dino import MergedDataLoader
 # from utils import get_mean_sd_by_band, get_crs
 # from utils import remove_black_tiles, remove_empty_tiles, remove_black_tiles2
 # from custom_datasets import *
+
+class GeoSampler(Sampler[BoundingBox], abc.ABC):
+
+    def __init__(self, dataset: GeoDataset, rois: Optional[BoundingBox] = None) -> None:
+        if rois is None:
+            self.index = dataset.index
+            rois = [BoundingBox(*self.index.bounds)]
+        else:
+            self.index = Index(interleaved=False, properties=Property(dimension=3))
+            for roi in rois: 
+                hits = dataset.index.intersection(tuple(roi), objects=True)
+                for hit in hits:
+                    bbox = BoundingBox(*hit.bounds) & roi
+                    self.index.insert(hit.id, tuple(bbox), hit.object)
+
+        self.res = dataset.res
+        self.rois = rois
+
+    @abc.abstractmethod
+    def __iter__(self) -> Iterator[BoundingBox]:
+        pass
+
+class RoiGeoSampler(GeoSampler):
+    """
+    !!! Only returns Bounding Boxes that have the same size as the different rois !!!
+    """
+    def __init__(
+        self,
+        dataset: GeoDataset,
+        size: Union[Tuple[float, float], float],
+        rois: Optional[BoundingBox] = None,
+        units: Units = Units.PIXELS,
+    ) -> None:
+
+        super().__init__(dataset, rois)
+        self.size = _to_tuple(size)
+        self.global_bounds = BoundingBox(*dataset.index.bounds)
+
+        if units == Units.PIXELS:
+            self.size = (self.size[0] * self.res, self.size[1] * self.res)
+
+        self.hits = []
+        for roi in self.rois :
+            for hit in self.index.intersection(tuple(roi), objects=True):
+                if list(roi)==hit.bounds:
+                    self.hits.append(hit)
+
+        self.length = len(rois)
+    
+    def __iter__(self) -> Iterator[BoundingBox]:
+        for hit in self.hits:
+            yield BoundingBox(*hit.bounds) 
+
+    def __len__(self) -> int:
+        return self.length
 
 
 def fit_proj(
@@ -171,7 +232,6 @@ def fit_proj(
                 #         feat_img = np.concatenate((feat_img, feat), axis=0)
                 # else:
                 feat = model(images)
-                print(feat.shape)
                 feat = feat.detach().cpu().numpy()
                 # print(feat.shape)
                 if feat_img is None:
@@ -557,33 +617,160 @@ def load_weights(
 
     return model
 
+def intersects_with_img(roi, file_list):
+    res = False
+    for file in file_list:
+        with rasterio.open(file) as ds :
+            tf = ds.meta.copy()['transform']
+            bounds = (tf[2], ds.width*tf[0]+tf[2], ds.height*tf[4]+tf[5], tf[5])
+            if (roi.minx>bounds[0]) & (roi.miny>bounds[2]) & (roi.maxx<bounds[1]) & (roi.maxy<bounds[3]):
+                # res = True
+                res = file
+                break      
+    return res
+
+def get_intersected_bboxes(
+        gdf, 
+        img_dir, 
+        filename_glob, 
+        geom_col_name = 'bboxes'
+        ):
+    pathname = os.path.join(img_dir, "**", filename_glob)
+    file_list = []
+    for filepath in glob.iglob(pathname, recursive=True):
+        file_list.append(filepath)
+    gdf['src']=[intersects_with_img(gdf[geom_col_name][i], file_list) for i in gdf.index]
+    gdf = gdf[gdf['src'] != False]
+    # return gdf.loc[[intersects_with_img(gdf[geom_col_name][i], file_list) for i in gdf.index]]
+    return gdf
+
+def prepare_shapefile_dataset(
+        shp_path, 
+        img_dir, 
+        filename_glob, 
+        dataset,
+        target_variable='C_id',
+        geom_col_name = 'bboxes',
+        sort_geographicaly=False,
+        target_size=224,
+        ):
+
+    bb = dataset.index.bounds
+
+    def polygon_to_bbox(polygon):
+        bounds = list(polygon.bounds)
+        bounds[1], bounds[2] = bounds[2], bounds[1]
+        return BoundingBox(*bounds, bb[4], bb[5])
+
+    gdf = gpd.read_file(shp_path, driver='ESRI Shapefile')
+    gdf = gdf.loc[gdf['geometry']!=None]
+    gdf = gdf.dropna(subset=[target_variable])
+
+    buffer_size = dataset.res * target_size * 0.5
+    if gdf.geom_type.unique() == "Point":
+        gdf.geometry = gdf.buffer(buffer_size, cap_style = 3)
+
+    # changes labels id so they go from 0 to N-1, with N the total number of labels. Conserves labels numerical order
+    labels = np.array(gdf[target_variable])
+    ordered = nsmallest(len(np.unique(labels)), np.unique(labels))
+    gdf[target_variable] = [ordered.index(i) for i in labels]
+
+    # only conserves rois which intersect with the images from the dataset
+    gdf[geom_col_name] = [polygon_to_bbox(gdf['geometry'][i]) for i in gdf.index]
+    gdf = get_intersected_bboxes(gdf, img_dir, filename_glob)
+
+    gdf.index = [i for i in range(len(gdf))]
+    print("Nb roi : ", len(gdf))
+    return gdf
+
+
+def prepare_shp_data(
+        data_path='/home/ptresson/congo/panchro_congo_all_renamed/A', 
+        shp_path = '/home/ptresson/congo/pointages/22_10_19_pointages_clean.shp',
+        means=[558.03], 
+        sds=[89.63], 
+        size=224, 
+        nsamples=500,
+        batch_size=50,
+        ):
+
+    transform = AugmentationSequential(
+            K.Resize(size, resample=Resample.BICUBIC.name),
+            Normalize(means, sds),
+            data_keys=["image"],
+    )
+
+    class Raster(RasterDataset):
+        filename_glob = '*.tif'
+        is_image = True
+
+    dataset = Raster(data_path)
+
+    dataset.transforms = transform
+
+    bb1 = dataset.index.bounds
+
+    gdf = prepare_shapefile_dataset(
+            shp_path=shp_path,
+            img_dir=data_path,
+            filename_glob='*.tif',
+            dataset=dataset,
+            target_variable='C_name',
+            )
+
+    rois = gdf['bboxes']
+
+    sampler = RoiGeoSampler(
+            dataset, 
+            size=size, 
+            rois=rois
+            )
+
+    dataloader = DataLoader(
+            dataset, 
+            sampler=sampler, 
+            collate_fn=stack_samples, 
+            shuffle=False, 
+            batch_size=batch_size,
+            num_workers=10,
+            pin_memory=True,
+            drop_last=True,
+            )
+
+    return dataloader, gdf
+
+
 if __name__ == "__main__":
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    # for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
 
-        checkpoint_path = f'./logs/{arch}/checkpoint.pth'
-        model, embed_dim = create_template_model(arch, in_chans=1)
-        model = load_weights(model, checkpoint_path)
-        model.to(device)
+    #     checkpoint_path = f'./logs/{arch}/checkpoint.pth'
+    #     model, embed_dim = create_template_model(arch, in_chans=1)
+    #     model = load_weights(model, checkpoint_path)
+    #     model.to(device)
 
-        print("Fit projection\n")
-        fit_proj(
-                model,
-                size=224,
-                nsamples=1_000,
-                feat_dim=embed_dim,
-                exclude_value=None,
-                patch_w=16, 
-                patch_h=16,
-                method='umap',
-                n_neighbors=20,
-                cls_token=True,
-                roi=None,
-                batch_size=16,
-                out_path_proj_model=f'./projs/{arch}.pkl'
-                )
+    #     print("Fit projection\n")
+    #     fit_proj(
+    #             model,
+    #             size=224,
+    #             nsamples=1_000,
+    #             feat_dim=embed_dim,
+    #             exclude_value=None,
+    #             patch_w=16, 
+    #             patch_h=16,
+    #             method='umap',
+    #             n_neighbors=20,
+    #             cls_token=True,
+    #             roi=None,
+    #             batch_size=16,
+    #             out_path_proj_model=f'./projs/{arch}.pkl'
+    #             )
+
+    dataloader = prepare_shp_data()
+
+    sys.exit(1)
 
 
     """
