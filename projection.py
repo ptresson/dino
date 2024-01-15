@@ -687,7 +687,7 @@ def prepare_shapefile_dataset(
 
 
 def prepare_shp_data(
-        data_path='/home/ptresson/congo/panchro_congo_all_renamed/A', 
+        data_path='/home/ptresson/congo/panchro_congo_all_renamed/B', 
         shp_path = '/home/ptresson/congo/pointages/22_10_19_pointages_clean.shp',
         means=[558.03], 
         sds=[89.63], 
@@ -936,6 +936,5 @@ if __name__ == "__main__":
             gdf.to_file(f'./out/{arch}{step}.shp', driver='ESRI Shapefile')
             del gdf
             del dataloader
-        sys.exit(1)
 
     sys.exit(1)
