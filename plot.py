@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
-def plot_umap(checkpoint="dino_vitb16", xlim=[-7, 32], ylim=[-5,25]):
+def plot_proj(checkpoint="dino_vitb16", method='umap', xlim=[-7, 32], ylim=[-5,25]):
     # Load your shapefiles into GeoDataFrames
     gdf1 = gpd.read_file(f'./out/A/{checkpoint}.shp')
     gdf2 = gpd.read_file(f'./out/B/{checkpoint}.shp')
@@ -18,25 +18,27 @@ def plot_umap(checkpoint="dino_vitb16", xlim=[-7, 32], ylim=[-5,25]):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
     scatter_src = sns.scatterplot(
-            x='x_umap', 
-            y='y_umap', 
+            x=f'x_{method}', 
+            y=f'y_{method}', 
             hue='src', 
             data=merged_gdf, 
             palette='Spectral', 
             ax=ax1, 
-            s=20
+            s=50,
+            # marker="+",
             )
     scatter_src.legend(loc='lower left',ncol=1, title="src", bbox_to_anchor=(1, 0))
     # ax1.set_title('Points Colored by src')
     
     scatter_ID = sns.scatterplot(
-            x='x_umap', 
-            y='y_umap', 
+            x=f'x_{method}', 
+            y=f'y_{method}', 
             hue='C_ID', 
             data=merged_gdf, 
             palette='tab10', 
             ax=ax2, 
-            s=20
+            s=50,
+            # marker="+",
             )
     scatter_ID.legend(loc='lower left', title="Class", bbox_to_anchor=(1, 0))
     # ax2.set_title('Points Colored by kmeans')
@@ -49,56 +51,7 @@ def plot_umap(checkpoint="dino_vitb16", xlim=[-7, 32], ylim=[-5,25]):
     plt.tight_layout()
 
     # Save the plot to a file
-    fig.savefig(f'./out/plots/umap/{checkpoint}.png')
-    plt.close()
-
-
-def plot_pca(checkpoint="dino_vitb16", xlim=[-7, 32], ylim=[-5,25]):
-    # Load your shapefiles into GeoDataFrames
-    gdf1 = gpd.read_file(f'./out/A/{checkpoint}.shp')
-    gdf2 = gpd.read_file(f'./out/B/{checkpoint}.shp')
-
-    # Concatenate GeoDataFrames vertically
-    merged_gdf = pd.concat([gdf1, gdf2], ignore_index=True)
-    merged_gdf['src'] = merged_gdf['src'].apply(lambda x: os.path.splitext(os.path.basename(x))[0])  # Keeps only the filename without extension
-
-
-    # Create a shared figure and two subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-
-    scatter_src = sns.scatterplot(
-            x='x_pca', 
-            y='y_pca', 
-            hue='src', 
-            data=merged_gdf, 
-            palette='Spectral', 
-            ax=ax1, 
-            s=20
-            )
-    scatter_src.legend(loc='lower left',ncol=1, title="src", bbox_to_anchor=(1, 0))
-    # ax1.set_title('Points Colored by src')
-    
-    scatter_ID = sns.scatterplot(
-            x='x_pca', 
-            y='y_pca', 
-            hue='C_ID', 
-            data=merged_gdf, 
-            palette='tab10', 
-            ax=ax2, 
-            s=20
-            )
-    scatter_ID.legend(loc='lower left', title="Class", bbox_to_anchor=(1, 0))
-    # ax2.set_title('Points Colored by kmeans')
-
-    scatter_src.set_xlim(xlim)
-    scatter_src.set_ylim(ylim)
-    scatter_ID.set_xlim(xlim)
-    scatter_ID.set_ylim(ylim)
-    
-    plt.tight_layout()
-
-    # Save the plot to a file
-    fig.savefig(f'./out/plots/pca/{checkpoint}.png')
+    fig.savefig(f'./out/plots/{method}/{checkpoint}.png')
     plt.close()
 
 
@@ -136,5 +89,5 @@ if __name__ == "__main__":
         xlim_pca, ylim_pca = get_lim(arch, method='pca')
 
         for step in ['0000','0020','0040','0060','0080','']:
-            plot_umap(f'{arch}{step}', xlim_umap, ylim_umap)
-            plot_pca(f'{arch}{step}', xlim_pca, ylim_pca)
+            plot_proj(f'{arch}{step}', method='umap', xlim=xlim_umap, ylim=ylim_umap)
+            plot_proj(f'{arch}{step}', method='pca', xlim=xlim_pca, ylim=ylim_pca)
