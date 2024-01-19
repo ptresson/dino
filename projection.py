@@ -687,7 +687,7 @@ def prepare_shapefile_dataset(
 
 
 def prepare_shp_data(
-        data_path='/home/ptresson/congo/panchro_congo_all_renamed/B', 
+        data_path='/home/ptresson/congo/panchro_congo_all_renamed/A', 
         shp_path = '/home/ptresson/congo/pointages/22_10_19_pointages_clean.shp',
         means=[558.03], 
         sds=[89.63], 
@@ -728,7 +728,7 @@ def prepare_shp_data(
             rois=rois
             )
 
-    print(f'sampler : {len(sampler)}')
+    # print(f'sampler : {len(sampler)}')
 
     dataloader = DataLoader(
             dataset, 
@@ -751,7 +751,7 @@ def inf_proj_rois(model, dataloader, path_proj_model):
     projs=[]
     i=0
 
-    print(f'dataloader:{len(dataloader)}')
+    # print(f'dataloader:{len(dataloader)}')
     for batch in dataloader:
         # print(f"{i / len(dataloader):.2%}", end="\r")
 
@@ -783,7 +783,7 @@ def inf_clust_rois(model, dataloader, path_proj_model):
     projs=[]
     i=0
 
-    print(f'dataloader:{len(dataloader)}')
+    # print(f'dataloader:{len(dataloader)}')
     for batch in dataloader:
         # print(f"{i / len(dataloader):.2%}", end="\r")
 
@@ -839,65 +839,65 @@ if __name__ == "__main__":
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    # for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
 
-        checkpoint_path = f'./logs/{arch}/checkpoint.pth'
-        model, embed_dim = create_template_model(arch, in_chans=1)
-        model = load_weights(model, checkpoint_path)
-        model.to(device)
+    #     checkpoint_path = f'./logs/{arch}/checkpoint.pth'
+    #     model, embed_dim = create_template_model(arch, in_chans=1)
+    #     model = load_weights(model, checkpoint_path)
+    #     model.to(device)
 
-        print("Fit UMAP\n")
-        fit_proj(
-                model,
-                size=224,
-                nsamples=1_000,
-                feat_dim=embed_dim,
-                exclude_value=None,
-                patch_w=16, 
-                patch_h=16,
-                method='umap',
-                n_neighbors=20,
-                cls_token=True,
-                roi=None,
-                batch_size=16,
-                out_path_proj_model=f'./projs/umap/{arch}.pkl',
-                n_components=2
-                )
+    #     print("Fit UMAP\n")
+    #     fit_proj(
+    #             model,
+    #             size=224,
+    #             nsamples=1_000,
+    #             feat_dim=embed_dim,
+    #             exclude_value=None,
+    #             patch_w=16, 
+    #             patch_h=16,
+    #             method='umap',
+    #             n_neighbors=20,
+    #             cls_token=True,
+    #             roi=None,
+    #             batch_size=16,
+    #             out_path_proj_model=f'./projs/umap/{arch}.pkl',
+    #             n_components=2
+    #             )
 
-        print("Fit PCA\n")
-        fit_proj(
-                model,
-                size=224,
-                nsamples=1_000,
-                feat_dim=embed_dim,
-                exclude_value=None,
-                patch_w=16, 
-                patch_h=16,
-                method='pca',
-                n_neighbors=20,
-                cls_token=True,
-                roi=None,
-                batch_size=16,
-                out_path_proj_model=f'./projs/pca/{arch}.pkl',
-                n_components=2
-                )
+    #     print("Fit PCA\n")
+    #     fit_proj(
+    #             model,
+    #             size=224,
+    #             nsamples=1_000,
+    #             feat_dim=embed_dim,
+    #             exclude_value=None,
+    #             patch_w=16, 
+    #             patch_h=16,
+    #             method='pca',
+    #             n_neighbors=20,
+    #             cls_token=True,
+    #             roi=None,
+    #             batch_size=16,
+    #             out_path_proj_model=f'./projs/pca/{arch}.pkl',
+    #             n_components=2
+    #             )
 
-        print("Fit Kmeans\n")
-        fit_proj(
-                model,
-                size=224,
-                nsamples=1_000,
-                feat_dim=embed_dim,
-                exclude_value=None,
-                patch_w=16, 
-                patch_h=16,
-                method='kmeans',
-                n_neighbors=20,
-                cls_token=True,
-                roi=None,
-                batch_size=16,
-                out_path_proj_model=f'./projs/kmeans/{arch}.pkl',
-                )
+    #     print("Fit Kmeans\n")
+    #     fit_proj(
+    #             model,
+    #             size=224,
+    #             nsamples=1_000,
+    #             feat_dim=embed_dim,
+    #             exclude_value=None,
+    #             patch_w=16, 
+    #             patch_h=16,
+    #             method='kmeans',
+    #             n_neighbors=20,
+    #             cls_token=True,
+    #             roi=None,
+    #             batch_size=16,
+    #             out_path_proj_model=f'./projs/kmeans/{arch}.pkl',
+    #             )
 
 
     for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
@@ -933,7 +933,39 @@ if __name__ == "__main__":
                 gdf = gdf.merge(rdf, on='bboxes')
 
             gdf = gdf.drop('bboxes', axis=1)
-            gdf.to_file(f'./out/{arch}{step}.shp', driver='ESRI Shapefile')
+            gdf.to_file(f'./out/A/{arch}{step}.shp', driver='ESRI Shapefile')
+            print(f'./out/A/{arch}{step}.shp')
+            del gdf
+            del dataloader
+
+            dataloader, gdf = prepare_shp_data(data_path='/home/ptresson/congo/panchro_congo_all_renamed/B/',
+                                               batch_size=68)
+            for method in ['umap','pca']:
+                bboxes, projs = inf_proj_rois(
+                        model, 
+                        dataloader,
+                        path_proj_model=f'./projs/{method}/{arch}.pkl'
+                        )
+
+                rdf = gpd.GeoDataFrame(list(zip(bboxes, projs)), columns=['bboxes', 'projs'])
+                gdf = gdf.merge(rdf, on='bboxes')
+                gdf[[f'x_{method}', f'y_{method}']] = gdf['projs'].apply(
+                        lambda x: split_coordinates(x, f'x_{method}', f'y_{method}'))
+
+                gdf = gdf.drop('projs', axis=1)
+            for method in ['kmeans']:
+                bboxes, projs = inf_clust_rois(
+                        model, 
+                        dataloader,
+                        path_proj_model=f'./projs/{method}/{arch}.pkl'
+                        )
+
+                rdf = gpd.GeoDataFrame(list(zip(bboxes, projs)), columns=['bboxes', 'kmeans'])
+                gdf = gdf.merge(rdf, on='bboxes')
+
+            gdf = gdf.drop('bboxes', axis=1)
+            gdf.to_file(f'./out/B/{arch}{step}.shp', driver='ESRI Shapefile')
+            print(f'./out/B/{arch}{step}.shp')
             del gdf
             del dataloader
 
