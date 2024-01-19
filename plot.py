@@ -62,7 +62,8 @@ def get_lim(arch="dino_vitb16", method='umap', margin=0.10):
     gdf2 = gpd.read_file(f'./out/B/{arch}0000.shp')
     total_df = pd.concat([gdf1, gdf2], ignore_index=True)
 
-    for step in ['0020','0040','0060','0080','']:
+    # for step in ['0020','0040','0060','0080','']:
+    for step in ['0000','0020','0040','0060','0080','0100','0120','0140','0160','0180','']:
         gdf1 = gpd.read_file(f'./out/A/{arch}{step}.shp')
         gdf2 = gpd.read_file(f'./out/B/{arch}{step}.shp')
         merged_df = pd.concat([gdf1, gdf2], ignore_index=True)
