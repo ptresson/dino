@@ -81,13 +81,13 @@ def get_lim(arch="dino_vitb16", method='umap', margin=0.10):
 
 if __name__ == "__main__":
 
-    # for arch in ['dino_vitb16', 'dino_resnet50', 'efficientnetb0', 'efficientnetb3']:
-    # for arch in ['dino_vitb16', 'dino_resnet50', 'efficientnetb0', 'efficientnetb3']:
-    for arch in ['dino_vitb16', 'dino_resnet50']:
+    for arch in ['dino_vitb16', 'dino_resnet50', 'efficientnet_b0', 'efficientnet_b3']:
+    # for arch in ['efficientnet_b0', 'efficientnet_b3']:
+    # for arch in ['dino_vitb16', 'dino_resnet50']:
 
         xlim_umap, ylim_umap = get_lim(arch)
         xlim_pca, ylim_pca = get_lim(arch, method='pca')
 
-        for step in ['0000','0020','0040','0060','0080','']:
+        for step in ['0000','0020','0040','0060','0080','0100','0120','0140','0160','0180','']:
             plot_proj(f'{arch}{step}', method='umap', xlim=xlim_umap, ylim=ylim_umap)
             plot_proj(f'{arch}{step}', method='pca', xlim=xlim_pca, ylim=ylim_pca)
