@@ -1,0 +1,8 @@
+name: torchgeo
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - torchgeo
+  - timm
+

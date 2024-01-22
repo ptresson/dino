@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+i# Copyright (c) Facebook, Inc. and its affiliates.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import torch
 from torch import nn
 import torch.distributed as dist
 from PIL import ImageFilter, ImageOps
+
+import socket
 
 
 class GaussianBlur(object):
@@ -429,15 +431,17 @@ def is_dist_avail_and_initialized():
 
 
 def get_world_size():
-    if not is_dist_avail_and_initialized():
-        return 1
-    return dist.get_world_size()
+    return int(os.environ['SLURM_NTASKS'])
+#if not is_dist_avail_and_initialized():
+#        return 1
+#    return dist.get_world_size()
 
 
 def get_rank():
-    if not is_dist_avail_and_initialized():
-        return 0
-    return dist.get_rank()
+    return int(os.environ['RANK'])
+#    if not is_dist_avail_and_initialized():
+#        return 0
+#    return dist.get_rank()
 
 
 def is_main_process():
@@ -465,38 +469,88 @@ def setup_for_distributed(is_master):
 
 
 def init_distributed_mode(args):
+    # number of nodes / node ID
+    n_nodes = int(os.environ['SLURM_JOB_NUM_NODES'])
+    node_id = int(os.environ['SLURM_NODEID'])
+
+    # local rank on the current node / global rank
+    local_rank = int(os.environ['SLURM_LOCALID'])
+    global_rank = int(os.environ['SLURM_PROCID'])
+
+    # number of processes / GPUs per node
+    world_size = int(os.environ['SLURM_NTASKS'])
+    n_gpu_per_node = world_size // n_nodes
+
+    # define master address and master port
+    hostnames = subprocess.check_output(['scontrol', 'show', 'hostnames', os.environ['SLURM_JOB_NODELIST']])
+    master_addr = hostnames.split()[0].decode('utf-8')
+
+    # set environment variables for 'env://'
+    os.environ['MASTER_ADDR'] = master_addr
+    os.environ['MASTER_PORT'] = str(29500)
+    os.environ['WORLD_SIZE'] = str(world_size)
+    os.environ['RANK'] = str(global_rank)
+
+    # define whether this is the master process / if we are in distributed mode
+    is_master = node_id == 0 and local_rank == 0
+    multi_node = n_nodes > 1
+    multi_gpu = world_size > 1
+
+    # summary
+    PREFIX = "%i - " % global_rank
+    print(PREFIX + "Number of nodes: %i" % n_nodes)
+    print(PREFIX + "Node ID        : %i" % node_id)
+    print(PREFIX + "Local rank     : %i" % local_rank)
+    print(PREFIX + "Global rank    : %i" % global_rank)
+    print(PREFIX + "World size     : %i" % world_size)
+    print(PREFIX + "GPUs per node  : %i" % n_gpu_per_node)
+    print(PREFIX + "Master         : %s" % str(is_master))
+    print(PREFIX + "Multi-node     : %s" % str(multi_node))
+    print(PREFIX + "Multi-GPU      : %s" % str(multi_gpu))
+    print(PREFIX + "Hostname       : %s" % socket.gethostname())
+
+    # set GPU device
+    torch.cuda.set_device(local_rank)
+
+    print("Initializing PyTorch distributed ...")
+    torch.distributed.init_process_group(
+        init_method='env://',
+        backend='nccl',
+    )
     # launched with torch.distributed.launch
-    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ['WORLD_SIZE'])
-        args.gpu = int(os.environ['LOCAL_RANK'])
+    #if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    #    args.rank = int(os.environ["RANK"])
+    #    args.world_size = int(os.environ['WORLD_SIZE'])
+    #    args.gpu = int(os.environ['LOCAL_RANK'])
     # launched with submitit on a slurm cluster
-    elif 'SLURM_PROCID' in os.environ:
-        args.rank = int(os.environ['SLURM_PROCID'])
-        args.gpu = args.rank % torch.cuda.device_count()
+    #elif 'SLURM_PROCID' in os.environ:
+    #    args.rank = int(os.environ['SLURM_PROCID'])
+    #    args.gpu = args.rank % torch.cuda.device_count()
     # launched naively with `python main_dino.py`
     # we manually add MASTER_ADDR and MASTER_PORT to env variables
-    elif torch.cuda.is_available():
-        print('Will run the code on one GPU.')
-        args.rank, args.gpu, args.world_size = 0, 0, 1
-        os.environ['MASTER_ADDR'] = '127.0.0.1'
-        os.environ['MASTER_PORT'] = '29500'
-    else:
-        print('Does not support training without GPU.')
-        sys.exit(1)
+    #elif torch.cuda.is_available():
+    #    print('Will run the code on one GPU.')
+    #    args.rank, args.gpu, args.world_size = 0, 0, 1
+    #    hostnames = subprocess.check_output(['scontrol', 'show', 'hostnames', os.environ['SLURM_JOB_NODELIST']])
+    #    master_addr = hostnames.split()[0].decode('utf-8')
+    #    os.environ['MASTER_ADDR'] = master_addr#'127.0.0.1'
+    #    os.environ['MASTER_PORT'] = '29500'
+    #else:
+    #    print('Does not support training without GPU.')
+    #    sys.exit(1)
 
-    dist.init_process_group(
-        backend="nccl",
-        init_method=args.dist_url,
-        world_size=args.world_size,
-        rank=args.rank,
-    )
+    #dist.init_process_group(
+    #    backend="nccl",
+    #    init_method=args.dist_url,
+    #    world_size=int(os.environ['WORLD_SIZE']),#args.world_size,
+    #    rank=args.rank,
+    #)
 
-    torch.cuda.set_device(args.gpu)
-    print('| distributed init (rank {}): {}'.format(
-        args.rank, args.dist_url), flush=True)
-    dist.barrier()
-    setup_for_distributed(args.rank == 0)
+    #torch.cuda.set_device(args.gpu)
+    #print('| distributed init (rank {}): {}'.format(
+    #    args.rank, args.dist_url), flush=True)
+    #dist.barrier()
+    #setup_for_distributed(args.rank == 0)
 
 
 def accuracy(output, target, topk=(1,)):
@@ -827,3 +881,4 @@ def multi_scale(samples, model):
     v /= 3
     v /= v.norm()
     return v
+

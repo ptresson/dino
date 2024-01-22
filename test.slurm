@@ -17,15 +17,18 @@
 #SBATCH --output=/gpfswork/rech/izx/udr86uu/dino/logs/%j.out
 #SBATCH --error=/gpfswork/rech/izx/udr86uu/dino/logs/%j.err
 
+### change WORLD_SIZE as gpus/node * num_nodes
+export WORLD_SIZE=4
+
 # Module
 module purge
 module load pytorch-gpu/py3/2.0.0
 conda activate torchgeo
 
 # Print command that are executed
-export PYTHONUNBUFFERED=1;
+# export PYTHONUNBUFFERED=1;
 set -x
 
 # Executing python code
-export PYTHONPATH=":."
+# export PYTHONPATH=":."
 python -u main_dino.py

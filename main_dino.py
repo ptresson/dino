@@ -22,7 +22,6 @@ from pathlib import Path
 import itertools
 from functools import partial
 import warnings
-warnings.filterwarnings("ignore")
 
 import numpy as np
 from PIL import Image
@@ -133,7 +132,7 @@ def get_args_parser():
         Used for small local view cropping of multi-crop.""")
 
     # Misc
-    parser.add_argument('--data_path', default='/home/ptresson/congo/panchro_congo_all_renamed', type=str,
+    parser.add_argument('--data_path', default='$SCRATH/congo/', type=str,
         help='Please specify path to the ImageNet training data.')
     parser.add_argument('--output_dir', default="./logs/", type=str, help='Path to save logs and checkpoints.')
     parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
@@ -829,6 +828,7 @@ def get_dataset_mean_sd(args):
 
 if __name__ == '__main__':
 
+    print("pouet")
     parser = argparse.ArgumentParser('DINO', parents=[get_args_parser()])
     args = parser.parse_args()
     utils.init_distributed_mode(args)
