@@ -87,6 +87,7 @@ class Trainer(object):
 
 
 def main():
+    print("plop")
     args = parse_args()
     if args.output_dir == "":
         args.output_dir = get_shared_folder() / "%j"

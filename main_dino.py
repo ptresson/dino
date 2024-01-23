@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+print("imports miscs")
 import argparse
 import os
 import sys
@@ -23,26 +24,33 @@ import itertools
 from functools import partial
 import warnings
 
+print("imports npy PIL")
 import numpy as np
 from PIL import Image
+print("imports torch")
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+print("imports torchvision")
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
+print("imports timm")
 import timm
 from timm import create_model
 
+print("imports torchgeo")
 from torchgeo.datasets import RasterDataset, stack_samples, unbind_samples, BoundingBox
 from torchgeo.samplers import RandomGeoSampler, GridGeoSampler
 from torchgeo.transforms import AugmentationSequential
 import kornia.augmentation as K
 from kornia.enhance.normalize import Normalize
+print("imports rasterio")
 import rasterio
 
+print("imports locaux")
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
@@ -312,7 +320,7 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
 
 
 
-def train_dino(args, data_loader):
+def train_one_dino(args, data_loader):
 
     student, teacher, embed_dim = get_model(args.arch, len(args.mean_dataset), args.drop_path_rate)
 
@@ -825,6 +833,16 @@ def get_dataset_mean_sd(args):
 
 
     sys.exit(1)
+
+def train_dino(args):
+    data_loader = prepare_congo_data(args)
+
+    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    # for arch in ['efficientnet_b0','efficientnet_b3']:
+        args.output_dir = f'./logs/{arch}' 
+        args.arch = arch
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        train_one_dino(args, data_loader)
 
 if __name__ == '__main__':
 

@@ -21,7 +21,8 @@ set -x
 
 module purge
 module load pytorch-gpu/py3/2.0.0
-conda activate torchgeo
+export GDAL_DATA="/gpfslocalsup/pub/anaconda-py3/2023.03/envs/pytorch-gpu-2.0.0+py3.10.9/lib/python3.10/site-packages/rasterio/gdal_data"
+export PROJ_DATA="/gpfslocalsup/pub/anaconda-py3/2023.03/envs/pytorch-gpu-2.0.0+py3.10.9/lib/python3.10/site-packages/rasterio/proj_data"
 
-srun python -u main_dino.py
+srun python -u run_with_submitit.py
 
