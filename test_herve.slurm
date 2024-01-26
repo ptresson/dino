@@ -1,9 +1,9 @@
 #!/bin/bash                                                                                                                                                                                                                                                                                               
 #SBATCH -A izx@v100
-#SBATCH --job-name=dinopc22     # job name
-#SBATCH -C v100-16g #32g
+#SBATCH --job-name=dinocongo     # job name
+#SBATCH -C v100-32g #32g
 #SBATCH --qos=qos_gpu-dev # t3#4 #dev #t4 # QoS
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4          # number of MPI tasks per node
 #SBATCH --gres=gpu:4                 # number of GPUs per node
 #SBATCH --cpus-per-task=10           # number of cores per tasks
@@ -24,5 +24,6 @@ module load pytorch-gpu/py3/2.0.0
 export GDAL_DATA="/gpfslocalsup/pub/anaconda-py3/2023.03/envs/pytorch-gpu-2.0.0+py3.10.9/lib/python3.10/site-packages/rasterio/gdal_data"
 export PROJ_DATA="/gpfslocalsup/pub/anaconda-py3/2023.03/envs/pytorch-gpu-2.0.0+py3.10.9/lib/python3.10/site-packages/rasterio/proj_data"
 
-srun python -u run_with_submitit.py
+#srun python -u run_with_submitit.py
+srun python -u main_dino.py
 
