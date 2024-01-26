@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-print("imports miscs")
 import argparse
 import os
 import sys
@@ -24,33 +23,27 @@ import itertools
 from functools import partial
 import warnings
 
-print("imports npy PIL")
 import numpy as np
 from PIL import Image
-print("imports torch")
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-print("imports torchvision")
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
-print("imports timm")
 import timm
 from timm import create_model
+from timm.models import load_checkpoint
 
-print("imports torchgeo")
 from torchgeo.datasets import RasterDataset, stack_samples, unbind_samples, BoundingBox
 from torchgeo.samplers import RandomGeoSampler, GridGeoSampler
 from torchgeo.transforms import AugmentationSequential
 import kornia.augmentation as K
 from kornia.enhance.normalize import Normalize
-print("imports rasterio")
 import rasterio
 
-print("imports locaux")
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
@@ -66,8 +59,8 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument('--arch', default='dino_vitb16', type=str,
-        choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small'] \
-                + torchvision_archs + torch.hub.list("facebookresearch/xcit:main"),
+        #choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small'], #\
+                #+ torchvision_archs + torch.hub.list("facebookresearch/xcit:main"),
         help="""Name of architecture to train. For quick experiments with ViTs,
         we recommend using vit_tiny or vit_small.""")
     parser.add_argument('--patch_size', default=16, type=int, help="""Size in pixels
@@ -110,9 +103,9 @@ def get_args_parser():
     parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
         gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
         help optimization for larger ViT architectures. 0 for disabling.""")
-    parser.add_argument('--batch_size_per_gpu', default=16, type=int,
+    parser.add_argument('--batch_size_per_gpu', default=32, type=int,
         help='Per-GPU batch-size : number of distinct images loaded on one GPU.')
-    parser.add_argument('--epochs', default=200, type=int, help='Number of epochs of training.')
+    parser.add_argument('--epochs', default=100, type=int, help='Number of epochs of training.')
     parser.add_argument('--freeze_last_layer', default=1, type=int, help="""Number of epochs
         during which we keep the output layer fixed. Typically doing so during
         the first epoch helps training. Try increasing this value if the loss does not decrease.""")
@@ -140,12 +133,12 @@ def get_args_parser():
         Used for small local view cropping of multi-crop.""")
 
     # Misc
-    parser.add_argument('--data_path', default='$SCRATH/congo/', type=str,
+    parser.add_argument('--data_path', default='/gpfsscratch/rech/izx/udr86uu/congo/', type=str,
         help='Please specify path to the ImageNet training data.')
-    parser.add_argument('--output_dir', default="./logs/", type=str, help='Path to save logs and checkpoints.')
-    parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
+    parser.add_argument('--output_dir', default="/gpfswork/rech/izx/udr86uu/dino/logs/", type=str, help='Path to save logs and checkpoints.')
+    parser.add_argument('--saveckp_freq', default=10, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
-    parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
+    parser.add_argument('--num_workers', default=0, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
@@ -154,7 +147,7 @@ def get_args_parser():
     parser.add_argument("--filename_glob", default="*.[tT][iI][fF]", type=str, help="Filename glob to select dataset files")
     parser.add_argument("--file_path", default="./data/tif/", type=str, help="directory containing the raster files")
     parser.add_argument("--sample_size", default=224, type=int, help="size of samples (px) in torchgeo")
-    parser.add_argument("--num_samples", default=10_000, type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--num_samples", default=50_000, type=int, help="number of sample for torchgeo sampler")
     parser.add_argument("--mean_dataset", default=[558.03], type=int, help="number of sample for torchgeo sampler")
     parser.add_argument("--sd_dataset", default=[89.63], type=int, help="number of sample for torchgeo sampler")
 
@@ -229,83 +222,169 @@ def resnet_first_layer_with_nchan(
 
 def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
 
-    if arch in torch.hub.list("facebookresearch/dino:main"):
-        if 'vit' in arch :
-            student = torch.hub.load('facebookresearch/dino:main', arch,
-                                    drop_path_rate=drop_path_rate,
-                                    in_chans=in_chans,
-                                    strict=False,
-                                    pretrained=False,
-                                    )
-            teacher = torch.hub.load('facebookresearch/dino:main', 
-                    arch, 
-                    in_chans=in_chans,
-                    pretrained=False,
-                    )
+    local_torchhub_path = '/gpfswork/rech/izx/udr86uu/.cache/torch/hub/checkpoints'
+    pretrained_path=f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth'
 
-        if 'resnet' in arch :
-            print("================== Resnet50")
-            student = torch.hub.load('facebookresearch/dino:main', arch,
-                                    )
-            student = resnet_first_layer_with_nchan(student, in_chans)
+    if 'vit' in arch:
+        print('vit')
+        student = vits.__dict__['vit_base'](
+                    patch_size=args.patch_size,
+                    drop_path_rate=args.drop_path_rate,  # stochastic depth
+                )
+        teacher = vits.__dict__['vit_base'](patch_size=args.patch_size)
+        embed_dim = student.embed_dim
 
-            teacher = torch.hub.load('facebookresearch/dino:main', 
-                    arch, 
-                    )
-            teacher = resnet_first_layer_with_nchan(teacher, in_chans)
-        # teacher = torch.hub.load('facebookresearch/dino:main', 
-        #         arch, 
-        #         in_chans=in_chans,
-        #         pretrained=False,
-        #         )
+        pretrained = torch.load(pretrained_path)
+        student.load_state_dict(pretrained)
+        teacher.load_state_dict(pretrained)
 
-        # get embed_dim before fully loading model to avoid hardcoding value
-        if not hasattr(student, 'embed_dim'):
-            x = student(torch.rand(1,in_chans,224,224))
-            student.fc, student.head = nn.Identity(), nn.Identity()
-            embed_dim = x.shape[1]
-        else:
-            embed_dim = student.embed_dim
-
-
-        if pretrained and in_chans != 3:
-            if 'vit' in arch :
-                pretrained = torch.hub.load('facebookresearch/dino:main', arch,
-                                        pretrained=True, 
-                                        drop_path_rate=drop_path_rate,
-                                        )
-                pretrained=vit_first_layer_with_nchan(
-                        pretrained,
-                        in_chans=in_chans,
-                        embed_dim=embed_dim,
-                        patch_size=patch_size
-                        )
-            if 'resnet' in arch :
-                pretrained = torch.hub.load('facebookresearch/dino:main', arch,
-                                        pretrained=True, 
-                                        )
-                pretrained=resnet_first_layer_with_nchan(
-                        pretrained,
-                        in_chans=in_chans,
-                        )
-
-            student.load_state_dict(pretrained.state_dict())
-            teacher.load_state_dict(pretrained.state_dict())
+        student=vit_first_layer_with_nchan(
+                student,
+                in_chans=in_chans,
+                embed_dim=embed_dim,
+                patch_size=args.patch_size
+                )
+        teacher=vit_first_layer_with_nchan(
+                teacher,
+                in_chans=in_chans,
+                embed_dim=embed_dim,
+                patch_size=args.patch_size
+                )
+        print('done creating vit')
 
 
 
-    elif arch in timm.list_models(pretrained=True):
+        ### cf. https://github.com/huggingface/pytorch-image-models/issues/2061
+        ##print('create vit')
+        ##student = create_model(
+        ##        arch,
+        ##        drop_path_rate=drop_path_rate,
+        ##        checkpoint_path=pretrained_path,
+        ##        in_chans=in_chans,
+        ##        pretrained=True,
+        ##        )
+        ##print(student )
+        ##print('create vit')
+        ##teacher = create_model(
+        ##        arch,
+        ##        in_chans=in_chans,
+        ##        checkpoint_path=pretrained_path,
+        ##        pretrained=True,
+        ##        )
+        #ptcfg = timm.models.registry.get_pretrained_cfg(f'{arch}')
+        ##ptcfg['file']=pretrained_path
+        ##ptcfg['custom_load']=False
+        #student = create_model(
+        #        arch,
+        #        drop_path_rate=drop_path_rate,
+        #        #pretrained_cfg=ptcfg,
+        #        in_chans=in_chans,
+        #        pretrained=True,
+        #        pretrained_cfg_overlay=dict(file=pretrained_path, custom_load=False),
+        #        )
+        #print('vit teacher')
+        #teacher = create_model(
+        #        arch,
+        #        in_chans=in_chans,
+        #        #pretrained_cfg=ptcfg,
+        #        pretrained_cfg_overlay=dict(file=pretrained_path, custom_load=False),
+        #        pretrained=True,
+        #        )
+#       # if 'vit' in arch :
+#       #     student = torch.hub.load(local_torchhub_path, arch,
+#       #                             source='local',
+#       #                             drop_path_rate=drop_path_rate,
+#       #                             in_chans=in_chans,
+#       #                             strict=False,
+#       #                             pretrained=False,
+#       #                             )
+#       #     teacher = torch.hub.load(local_torchhub_path, 
+#       #                             arch, 
+#       #                             source='local',
+#       #                             in_chans=in_chans,
+#       #                             pretrained=False,
+#       #                             )
+#
+#       # if 'resnet' in arch :
+#       #     print("================== Resnet50")
+#       #     student = torch.hub.load(local_torchhub_path, arch,
+#       #                             source='local',
+#       #                             )
+#       #     student = resnet_first_layer_with_nchan(student, in_chans)
+#
+#       #     teacher = torch.hub.load(local_torchhub_path, 
+#       #                             arch, 
+#       #                             source='local',
+#       #                             )
+#       #     teacher = resnet_first_layer_with_nchan(teacher, in_chans)
+#       # # teacher = torch.hub.load('facebookresearch/dino:main', 
+#       # #         arch, 
+#       # #         in_chans=in_chans,
+#       # #         pretrained=False,
+#       # #         )
+#
+#       # # get embed_dim before fully loading model to avoid hardcoding value
+#       # if not hasattr(student, 'embed_dim'):
+#       #     x = student(torch.rand(1,in_chans,224,224))
+#       #     student.fc, student.head = nn.Identity(), nn.Identity()
+#       #     embed_dim = x.shape[1]
+#       # else:
+#       #     embed_dim = student.embed_dim
+#
+#
+#       # if pretrained and in_chans != 3:
+#       #     if 'vit' in arch :
+#       #         pretrained = torch.hub.load(local_torchhub_path, arch,
+#       #                                 pretrained=True, 
+        ##student.load_pretrained(f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth')
+        ##teacher.load_pretrained(f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth')
+#       #                                 source='local',
+#       #                                 drop_path_rate=drop_path_rate,
+#       #                                 )
+#       #         pretrained=vit_first_layer_with_nchan(
+#       #                 pretrained,
+#       #                 in_chans=in_chans,
+#       #                 embed_dim=embed_dim,
+#       #                 patch_size=patch_size
+#       #                 )
+#       #     if 'resnet' in arch :
+#       #         pretrained = torch.hub.load(local_torchhub_path, arch,
+#       #                                 pretrained=True, 
+#       #                                 source='local',
+#       #                                 drop_path_rate=drop_path_rate,
+#       #                                 )
+#       #         pretrained=resnet_first_layer_with_nchan(
+#       #                 pretrained,
+#       #                 in_chans=in_chans,
+#       #                 )
+#
+#       #     student.load_state_dict(pretrained.state_dict())
+#       #     teacher.load_state_dict(pretrained.state_dict())
+
+
+
+    else:
+        # see https://github.com/huggingface/pytorch-image-models/discussions/1323
+        print(timm.__version__)
+        ptcfg = timm.models.registry.get_pretrained_cfg(f'{arch}')
+        ptcfg.pop('url')
+        ptcfg['file']=pretrained_path
         student = create_model(
                 arch,
-                pretrained=pretrained,
                 drop_path_rate=drop_path_rate,
+                pretrained_cfg=ptcfg,
                 in_chans=in_chans,
+                pretrained=True,
+                num_classes=0,
                 )
         teacher = create_model(
                 arch,
-                pretrained=pretrained,
                 in_chans=in_chans,
+                pretrained_cfg=ptcfg,
+                pretrained=True,
+                num_classes=0
                 )
+
         student.reset_classifier(0,'avg')
         teacher.reset_classifier(0,'avg')
 
@@ -315,6 +394,108 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
             embed_dim = x.shape[1]
         else:
             embed_dim = student.embed_dim
+
+
+
+
+
+#
+#    if 'vit' in arch :
+#        student = torch.hub.load('/gpfswork/rech/izx/udr86uu/.cache/torch/hub/checkpoints', arch,
+#                                weights=f'{arch}.pth'
+#                                drop_path_rate=drop_path_rate,
+#                                in_chans=in_chans,
+#                                strict=False,
+#                                pretrained=False,
+#                                )
+#        teacher = torch.hub.load('/gpfswork/rech/izx/udr86uu/.cache/torch/hub/checkpoints', 
+#                arch, 
+#                in_chans=in_chans,
+#                pretrained=False,
+#                )
+#
+#    if 'resnet' in arch :
+#        print("================== Resnet50")
+#        student = torch.hub.load('/gpfswork/rech/izx/udr86uu/.cache/torch/hub/checkpoints', arch,
+#                                weights=f'{arch}.pth'
+#                                )
+#        student = resnet_first_layer_with_nchan(student, in_chans)
+#
+#        teacher = torch.hub.load('/gpfswork/rech/izx/udr86uu/.cache/torch/hub/checkpoints'
+#                arch, 
+#                )
+#        teacher = resnet_first_layer_with_nchan(teacher, in_chans)
+#    # teacher = torch.hub.load('facebookresearch/dino:main', 
+#    #         arch, 
+#    #         in_chans=in_chans,
+#    #         pretrained=False,
+#    #         )
+#
+#    # get embed_dim before fully loading model to avoid hardcoding value
+#    if not hasattr(student, 'embed_dim'):
+#        x = student(torch.rand(1,in_chans,224,224))
+#        student.fc, student.head = nn.Identity(), nn.Identity()
+#        embed_dim = x.shape[1]
+#    else:
+#        embed_dim = student.embed_dim
+#
+#
+#    if pretrained and in_chans != 3:
+#        if 'vit' in arch :
+#            pretrained = torch.hub.load('facebookresearch/dino:main', arch,
+#                                    pretrained=True, 
+#                                    drop_path_rate=drop_path_rate,
+#                                    )
+#            pretrained=vit_first_layer_with_nchan(
+#                    pretrained,
+#                    in_chans=in_chans,
+#                    embed_dim=embed_dim,
+#                    patch_size=patch_size
+#                    )
+#        if 'resnet' in arch :
+#            pretrained = torch.hub.load('facebookresearch/dino:main', arch,
+#                                    pretrained=True, 
+#                                    )
+#            pretrained=resnet_first_layer_with_nchan(
+#                    pretrained,
+#                    in_chans=in_chans,
+#                    )
+#
+#        student.load_state_dict(pretrained.state_dict())
+#        teacher.load_state_dict(pretrained.state_dict())
+#
+#
+#
+#    else:
+#        # see https://github.com/huggingface/pytorch-image-models/discussions/1323
+#        ptcfg = timm.models.registry.get_pretrained_cfg(f'{arch}')
+#        ptcfg.pop('url')
+#        ptcfg['file']=f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth'
+#        student = create_model(
+#                arch,
+#                drop_path_rate=drop_path_rate,
+#                pretrained_cfg=ptcfg,
+#                in_chans=in_chans,
+#                pretrained=True,
+#                )
+#        teacher = create_model(
+#                arch,
+#                in_chans=in_chans,
+#                pretrained_cfg=ptcfg,
+#                pretrained=True,
+#                )
+#
+#        #student.load_pretrained(f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth')
+#        #teacher.load_pretrained(f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth')
+#        student.reset_classifier(0,'avg')
+#        teacher.reset_classifier(0,'avg')
+#
+#    if not hasattr(student, 'embed_dim'):
+#        x = student(torch.rand(1,in_chans,224,224))
+#        # student.fc, student.head = nn.Identity(), nn.Identity()
+#        embed_dim = x.shape[1]
+#    else:
+#        embed_dim = student.embed_dim
 
     return student, teacher, embed_dim
 
@@ -330,6 +511,8 @@ def train_one_dino(args, data_loader):
         args.out_dim,
         use_bn=args.use_bn_in_head,
         norm_last_layer=args.norm_last_layer,
+        #student.load_pretrained(f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth')
+        #teacher.load_pretrained(f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth')
     ))
     teacher = utils.MultiCropWrapper(
         teacher,
@@ -837,32 +1020,39 @@ def get_dataset_mean_sd(args):
 def train_dino(args):
     data_loader = prepare_congo_data(args)
 
-    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
-    # for arch in ['efficientnet_b0','efficientnet_b3']:
-        args.output_dir = f'./logs/{arch}' 
-        args.arch = arch
-        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-        train_one_dino(args, data_loader)
+    #for arch in ['vit_base_patch16_224','efficientnet_b0','resnet50','efficientnet_b4',]:
+    #    print(arch)
+    #    args.output_dir = f'./logs/{arch}' 
+    #    args.arch = arch
+    #    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    #    train_one_dino(args, data_loader)
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    train_one_dino(args, data_loader)
 
 if __name__ == '__main__':
 
-    print("pouet")
     parser = argparse.ArgumentParser('DINO', parents=[get_args_parser()])
     args = parser.parse_args()
     utils.init_distributed_mode(args)
     utils.fix_random_seeds(args.seed)
-    print("git:\n  {}\n".format(utils.get_sha()))
-    print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
-    cudnn.benchmark = True
+    train_dino(args)
+    #print("pouet")
+    #parser = argparse.ArgumentParser('DINO', parents=[get_args_parser()])
+    #args = parser.parse_args()
+    #utils.init_distributed_mode(args)
+    #utils.fix_random_seeds(args.seed)
+    #print("git:\n  {}\n".format(utils.get_sha()))
+    #print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
+    #cudnn.benchmark = True
 
-    ## Operation is done one time and then hardcoded here
-    # get_dataset_mean_sd(args)
+    ### Operation is done one time and then hardcoded here
+    ## get_dataset_mean_sd(args)
 
-    data_loader = prepare_congo_data(args)
+    #data_loader = prepare_congo_data(args)
 
-    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
-    # for arch in ['efficientnet_b0','efficientnet_b3']:
-        args.output_dir = f'./logs/{arch}' 
-        args.arch = arch
-        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-        train_dino(args, data_loader)
+    #for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    ## for arch in ['efficientnet_b0','efficientnet_b3']:
+    #    args.output_dir = f'./logs/{arch}' 
+    #    args.arch = arch
+    #    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    #    train_dino(args, data_loader)
