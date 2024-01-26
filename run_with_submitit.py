@@ -26,30 +26,30 @@ import submitit
 
 def parse_args():
     parser = argparse.ArgumentParser("Submitit for DINO", parents=[main_dino.get_args_parser()])
-    parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
-    parser.add_argument("--nodes", default=2, type=int, help="Number of nodes to request")
-    parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
+    parser.add_argument("--ngpus", default=4, type=int, help="Number of gpus to request on each node")
+    parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
+    parser.add_argument("--timeout", default=100, type=int, help="Duration of the job")
 
-    parser.add_argument("--partition", default="learnfair", type=str, help="Partition where to submit")
-    parser.add_argument("--use_volta32", action='store_true', help="Big models? Use this")
+    parser.add_argument("--partition", default="gpu-dev", type=str, help="Partition where to submit")
+    parser.add_argument("--use_volta32", action='store_true', default=False, help="Big models? Use this")
     parser.add_argument('--comment', default="", type=str,
                         help='Comment to pass to scheduler, e.g. priority message')
     return parser.parse_args()
 
 
-def get_shared_folder() -> Path:
-    user = os.getenv("USER")
-    if Path("/checkpoint/").is_dir():
-        p = Path(f"/checkpoint/{user}/experiments")
-        p.mkdir(exist_ok=True)
-        return p
-    raise RuntimeError("No shared folder available")
+def get_shared_folder(args) -> Path:
+    #user = os.getenv("USER")
+    #if Path("/checkpoint/").is_dir():
+    #    p = Path(f"/checkpoint/{user}/experiments")
+    #    p.mkdir(exist_ok=True)
+    #    return p
+    #raise RuntimeError("No shared folder available")
+    return args.output_dir
 
-
-def get_init_file():
+def get_init_file(args):
     # Init file must not exist, but it's parent dir must exist.
-    os.makedirs(str(get_shared_folder()), exist_ok=True)
-    init_file = get_shared_folder() / f"{uuid.uuid4().hex}_init"
+    os.makedirs(str(get_shared_folder(args)), exist_ok=True)
+    init_file = get_shared_folder(args) / f"{uuid.uuid4().hex}_init"
     if init_file.exists():
         os.remove(str(init_file))
     return init_file
@@ -69,7 +69,7 @@ class Trainer(object):
         import os
         import submitit
 
-        self.args.dist_url = get_init_file().as_uri()
+        self.args.dist_url = get_init_file(args).as_uri()
         print("Requeuing ", self.args)
         empty_trainer = type(self)(self.args)
         return submitit.helpers.DelayedSubmission(empty_trainer)
@@ -87,12 +87,17 @@ class Trainer(object):
 
 
 def main():
-    print("plop")
     args = parse_args()
-    if args.output_dir == "":
-        args.output_dir = get_shared_folder() / "%j"
+    print(args.arch, args.patch_size)
+    #args.arch = 'vit_base'
+    #args.patch_size = 8
+
+    #if args.output_dir == "":
+    #    args.output_dir = get_shared_folder() / "%j"
+    args.output_dir = "/gpfswork/rech/izx/udr86uu/dino/logs/"
+    args.use_volta32=False
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    executor = submitit.AutoExecutor(folder=args.output_dir, slurm_max_num_timeout=30)
+    executor = submitit.AutoExecutor(folder=args.output_dir)
 
     num_gpus_per_node = args.ngpus
     nodes = args.nodes
@@ -106,21 +111,21 @@ def main():
         kwargs['slurm_comment'] = args.comment
 
     executor.update_parameters(
-        mem_gb=40 * num_gpus_per_node,
+    #    mem_gb=40 * num_gpus_per_node,
         gpus_per_node=num_gpus_per_node,
         tasks_per_node=num_gpus_per_node,  # one task per GPU
         cpus_per_task=10,
         nodes=nodes,
         timeout_min=timeout_min,  # max is 60 * 72
         # Below are cluster dependent parameters
-        slurm_partition=partition,
+        #slurm_partition=partition,
         slurm_signal_delay_s=120,
         **kwargs
     )
 
     executor.update_parameters(name="dino")
 
-    args.dist_url = get_init_file().as_uri()
+    #args.dist_url = get_init_file(args).as_uri()
 
     trainer = Trainer(args)
     job = executor.submit(trainer)
