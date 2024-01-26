@@ -513,44 +513,47 @@ def init_distributed_mode(args):
     torch.cuda.set_device(local_rank)
 
     print("Initializing PyTorch distributed ...")
-    torch.distributed.init_process_group(
-        init_method='env://',
-        backend='nccl',
-    )
-    # launched with torch.distributed.launch
-    #if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-    #    args.rank = int(os.environ["RANK"])
-    #    args.world_size = int(os.environ['WORLD_SIZE'])
-    #    args.gpu = int(os.environ['LOCAL_RANK'])
+
+    #if not dist.is_initialized():
+    #    torch.distributed.init_process_group(
+    #        init_method='env://',
+    #        backend='nccl',
+    #    )
+    # #launched with torch.distributed.launch
+    # if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    #     args.rank = int(os.environ["RANK"])
+    #     args.world_size = int(os.environ['WORLD_SIZE'])
+    #     args.gpu = int(os.environ['LOCAL_RANK'])
     # launched with submitit on a slurm cluster
     #elif 'SLURM_PROCID' in os.environ:
-    #    args.rank = int(os.environ['SLURM_PROCID'])
-    #    args.gpu = args.rank % torch.cuda.device_count()
-    # launched naively with `python main_dino.py`
-    # we manually add MASTER_ADDR and MASTER_PORT to env variables
-    #elif torch.cuda.is_available():
-    #    print('Will run the code on one GPU.')
-    #    args.rank, args.gpu, args.world_size = 0, 0, 1
-    #    hostnames = subprocess.check_output(['scontrol', 'show', 'hostnames', os.environ['SLURM_JOB_NODELIST']])
-    #    master_addr = hostnames.split()[0].decode('utf-8')
-    #    os.environ['MASTER_ADDR'] = master_addr#'127.0.0.1'
-    #    os.environ['MASTER_PORT'] = '29500'
-    #else:
-    #    print('Does not support training without GPU.')
-    #    sys.exit(1)
+    if 'SLURM_PROCID' in os.environ:
+        args.rank = int(os.environ['SLURM_PROCID'])
+        args.gpu = args.rank % torch.cuda.device_count()
+    #launched naively with `python main_dino.py`
+    #we manually add MASTER_ADDR and MASTER_PORT to env variables
+    elif torch.cuda.is_available():
+        print('Will run the code on one GPU.')
+        args.rank, args.gpu, args.world_size = 0, 0, 1
+        hostnames = subprocess.check_output(['scontrol', 'show', 'hostnames', os.environ['SLURM_JOB_NODELIST']])
+        master_addr = hostnames.split()[0].decode('utf-8')
+        os.environ['MASTER_ADDR'] = master_addr#'127.0.0.1'
+        os.environ['MASTER_PORT'] = '29500'
+    else:
+        print('Does not support training without GPU.')
+        sys.exit(1)
 
-    #dist.init_process_group(
-    #    backend="nccl",
-    #    init_method=args.dist_url,
-    #    world_size=int(os.environ['WORLD_SIZE']),#args.world_size,
-    #    rank=args.rank,
-    #)
+    dist.init_process_group(
+        backend="nccl",
+        init_method=args.dist_url,
+        world_size=int(os.environ['WORLD_SIZE']),#args.world_size,
+        rank=args.rank,
+    )
 
-    #torch.cuda.set_device(args.gpu)
-    #print('| distributed init (rank {}): {}'.format(
-    #    args.rank, args.dist_url), flush=True)
-    #dist.barrier()
-    #setup_for_distributed(args.rank == 0)
+    torch.cuda.set_device(args.gpu)
+    print('| distributed init (rank {}): {}'.format(
+        args.rank, args.dist_url), flush=True)
+    dist.barrier()
+    setup_for_distributed(args.rank == 0)
 
 
 def accuracy(output, target, topk=(1,)):
