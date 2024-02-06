@@ -109,7 +109,7 @@ def get_args_parser():
     parser.add_argument('--freeze_last_layer', default=1, type=int, help="""Number of epochs
         during which we keep the output layer fixed. Typically doing so during
         the first epoch helps training. Try increasing this value if the loss does not decrease.""")
-    parser.add_argument("--lr", default=0.0001, type=float, help="""Learning rate at the end of
+    parser.add_argument("--lr", default=0.00005, type=float, help="""Learning rate at the end of
         linear warmup (highest LR used during training). The learning rate is linearly scaled
         with the batch size, and specified here for a reference batch size of 256.""")
     parser.add_argument("--warmup_epochs", default=10, type=int,
@@ -147,7 +147,7 @@ def get_args_parser():
     parser.add_argument("--filename_glob", default="*.[tT][iI][fF]", type=str, help="Filename glob to select dataset files")
     parser.add_argument("--file_path", default="./data/tif/", type=str, help="directory containing the raster files")
     parser.add_argument("--sample_size", default=224, type=int, help="size of samples (px) in torchgeo")
-    parser.add_argument("--num_samples", default=50_000, type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--num_samples", default=5_000, type=int, help="number of sample for torchgeo sampler")
     parser.add_argument("--mean_dataset", default=[558.03], type=int, help="number of sample for torchgeo sampler")
     parser.add_argument("--sd_dataset", default=[89.63], type=int, help="number of sample for torchgeo sampler")
 
