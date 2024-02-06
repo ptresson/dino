@@ -24,4 +24,5 @@ module load pytorch-gpu/py3/2.0.0
 export GDAL_DATA="/gpfslocalsup/pub/anaconda-py3/2023.03/envs/pytorch-gpu-2.0.0+py3.10.9/lib/python3.10/site-packages/rasterio/gdal_data"
 export PROJ_DATA="/gpfslocalsup/pub/anaconda-py3/2023.03/envs/pytorch-gpu-2.0.0+py3.10.9/lib/python3.10/site-packages/rasterio/proj_data"
 
-srun python -u main_dino.py --arch efficientnet_b0 --batch_size_per_gpu 100
+srun python -u main_dino.py --arch efficientnet_b0 --batch_size_per_gpu 100 \
+--output_dir /gpfswork/rech/izx/udr86uu/dino/logs/efficientnet_b0/$SLURM_JOB_ID/
