@@ -133,10 +133,10 @@ def get_args_parser():
         Used for small local view cropping of multi-crop.""")
 
     # Misc
-    parser.add_argument('--data_path', default='/gpfsscratch/rech/izx/udr86uu/congo/', type=str,
+    parser.add_argument('--data_path', default='/gpfsscratch/rech/izx/udr86uu/sentinel/', type=str,
         help='Please specify path to the ImageNet training data.')
-    parser.add_argument('--output_dir', default="/gpfswork/rech/izx/udr86uu/dino/logs/", type=str, help='Path to save logs and checkpoints.')
-    parser.add_argument('--saveckp_freq', default=10, type=int, help='Save checkpoint every x epochs.')
+    parser.add_argument('--output_dir', default="/gpfswork/rech/izx/udr86uu/sentinel/logs/", type=str, help='Path to save logs and checkpoints.')
+    parser.add_argument('--saveckp_freq', default=5, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=0, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
@@ -145,11 +145,11 @@ def get_args_parser():
 
     # torchgeo specific
     parser.add_argument("--filename_glob", default="*.[tT][iI][fF]", type=str, help="Filename glob to select dataset files")
-    parser.add_argument("--file_path", default="./data/tif/", type=str, help="directory containing the raster files")
     parser.add_argument("--sample_size", default=224, type=int, help="size of samples (px) in torchgeo")
-    parser.add_argument("--num_samples", default=50_000, type=int, help="number of sample for torchgeo sampler")
-    parser.add_argument("--mean_dataset", default=[558.03], type=int, help="number of sample for torchgeo sampler")
-    parser.add_argument("--sd_dataset", default=[89.63], type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--num_samples", default=1_000, type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--mean_dataset", default=[118.61897209826,108.64862578646,74.299567137674,128.58062678415,78.264311585937,122.89514688913,137.14044551509,139.30259245283,72.188204447851,46.75183561633,142.9639953584], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
+    parser.add_argument("--sd_dataset", default=[53.144739238236,49.092660967468,42.331142946847,47.635403548161,44.975424397381,47.834278860924,45.405740935281,45.354688621251,45.220474931332,41.992920448203,18.166579325965], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
+    parser.add_argument('--corrected', type=utils.bool_flag, default=False, help="use brdf corrected image")
 
     return parser
 
@@ -798,6 +798,9 @@ class DataAugmentationDINOTorchgeo(object):
         self.global_crops_size = global_crops_size
         self.local_crops_size = local_crops_size
 
+        dataset_mean = torch.Tensor(dataset_mean)
+        dataset_std = torch.Tensor(dataset_std)
+
         
         # random resized crop and flip
         self.geometric_augmentation_global = AugmentationSequential(
@@ -822,13 +825,14 @@ class DataAugmentationDINOTorchgeo(object):
 
         # normalization
         self.normalize = AugmentationSequential(
-                Normalize(dataset_mean, dataset_std),
+                #Normalize(dataset_mean, dataset_std),
+                K.Normalize(dataset_mean, dataset_std),
                 data_keys=["image"],
         )
       
         self.global_transfo1 = AugmentationSequential(GaussianBlur(p=1.0), data_keys=["image"])
         self.global_transfo2 = AugmentationSequential(GaussianBlur(p=0.1), 
-                                                       transforms.RandomSolarize(threshold=0, p=0.2), 
+                                                       #transforms.RandomSolarize(threshold=0, p=0.2), 
                                                         data_keys=["image"])
         self.local_transfo = AugmentationSequential(GaussianBlur(p=0.5), data_keys=["image"])
         
@@ -836,6 +840,8 @@ class DataAugmentationDINOTorchgeo(object):
     def __call__(self, image):
         output = {}
 
+        #if len(image['image'].shape) > 4:
+        #    image['image'].squeeze(1)
         image = self.normalize(image)
         # global crops:
         im1_base = self.geometric_augmentation_global(image)
@@ -855,7 +861,7 @@ class DataAugmentationDINOTorchgeo(object):
 
         return output
 
-def prepare_congo_data(args):
+def prepare_sentinel_data(args):
 
     transform = DataAugmentationDINOTorchgeo(
         args.global_crops_scale,
@@ -865,41 +871,38 @@ def prepare_congo_data(args):
         dataset_std = args.sd_dataset,
     )
 
-    class Raster(RasterDataset):
-        filename_glob = args.filename_glob
-        is_image = True
+    if args.corrected:
+        class Raster(RasterDataset):
+            filename_glob = "Mosa_8B_Projet_Pheno_24022022.tif"
+            is_image = True
 
-    dataset1 = Raster(os.path.join(args.data_path,'A'))
-    dataset2 = Raster(os.path.join(args.data_path,'B'))
+    else:
+        class Raster(RasterDataset):
+            filename_glob = "Mosa8bits_brute_hilleshade_303020221.tif"
+            is_image = True
 
-    dataset1.transforms = transform
-    dataset2.transforms = transform
+    dataset = Raster(args.data_path)
 
-    bb1 = dataset1.index.bounds
-    bb2 = dataset2.index.bounds
-    roi1 = BoundingBox(bb1[0], bb1[1], bb1[2], bb1[3], bb1[4], bb1[5])
-    roi2 = BoundingBox(bb2[0], bb2[1], bb2[2], bb2[3], bb2[4], bb2[5])
+    dataset.transforms = transform
 
-    sampler1 = RandomGeoSampler(
-            dataset1, 
+    bb = dataset.index.bounds
+
+    roi = BoundingBox(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
+
+    sampler = RandomGeoSampler(
+            dataset, 
             size=(args.sample_size,args.sample_size), 
             length=args.num_samples, 
-            roi=roi1
-            )
-    sampler2 = RandomGeoSampler(
-            dataset2, 
-            size=(args.sample_size,args.sample_size), 
-            length=args.num_samples, 
-            roi=roi2
+            roi=roi
             )
 
     collate_fn = partial(
         collate_data_and_cast_torchgeo,
     )
 
-    data_loader1 = DataLoader(
-            dataset1, 
-            sampler=sampler1, 
+    data_loader = DataLoader(
+            dataset, 
+            sampler=sampler, 
             collate_fn=collate_fn, 
             shuffle=False, 
             batch_size=args.batch_size_per_gpu,
@@ -907,18 +910,6 @@ def prepare_congo_data(args):
             pin_memory=True,
             drop_last=True,
             )
-    data_loader2 = DataLoader(
-            dataset2, 
-            sampler=sampler2, 
-            collate_fn=collate_fn, 
-            shuffle=False, 
-            batch_size=args.batch_size_per_gpu,
-            num_workers=args.num_workers,
-            pin_memory=True,
-            drop_last=True,
-            )
-
-    data_loader=MergedDataLoader(data_loader1, data_loader2)
 
     return data_loader
 
@@ -1018,7 +1009,7 @@ def get_dataset_mean_sd(args):
     sys.exit(1)
 
 def train_dino(args):
-    data_loader = prepare_congo_data(args)
+    data_loader = prepare_sentinel_data(args)
 
     #for arch in ['vit_base_patch16_224','efficientnet_b0','resnet50','efficientnet_b4',]:
     #    print(arch)
