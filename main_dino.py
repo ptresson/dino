@@ -133,10 +133,10 @@ def get_args_parser():
         Used for small local view cropping of multi-crop.""")
 
     # Misc
-    parser.add_argument('--data_path', default='/gpfsscratch/rech/izx/udr86uu/sentinel/', type=str,
+    parser.add_argument('--data_path', default='/home/ptresson/congo/sentinel/', type=str,
         help='Please specify path to the ImageNet training data.')
-    parser.add_argument('--output_dir', default="/gpfswork/rech/izx/udr86uu/sentinel/logs/", type=str, help='Path to save logs and checkpoints.')
-    parser.add_argument('--saveckp_freq', default=5, type=int, help='Save checkpoint every x epochs.')
+    parser.add_argument('--output_dir', default="./logs/brdf", type=str, help='Path to save logs and checkpoints.')
+    parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=0, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
@@ -146,7 +146,7 @@ def get_args_parser():
     # torchgeo specific
     parser.add_argument("--filename_glob", default="*.[tT][iI][fF]", type=str, help="Filename glob to select dataset files")
     parser.add_argument("--sample_size", default=224, type=int, help="size of samples (px) in torchgeo")
-    parser.add_argument("--num_samples", default=1_000, type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--num_samples", default=100_000, type=int, help="number of sample for torchgeo sampler")
     parser.add_argument("--mean_dataset", default=[118.61897209826,108.64862578646,74.299567137674,128.58062678415,78.264311585937,122.89514688913,137.14044551509,139.30259245283,72.188204447851,46.75183561633,142.9639953584], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
     parser.add_argument("--sd_dataset", default=[53.144739238236,49.092660967468,42.331142946847,47.635403548161,44.975424397381,47.834278860924,45.405740935281,45.354688621251,45.220474931332,41.992920448203,18.166579325965], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
     parser.add_argument('--corrected', type=utils.bool_flag, default=False, help="use brdf corrected image")
@@ -225,7 +225,8 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
     local_torchhub_path = '/gpfswork/rech/izx/udr86uu/.cache/torch/hub/checkpoints'
     pretrained_path=f'/gpfsscratch/rech/izx/udr86uu/pretrained/{arch}.pth'
 
-    if 'vit' in arch:
+    # if 'vit' in arch:
+    if 'ksdljvit' in arch:
         print('vit')
         student = vits.__dict__['vit_base'](
                     patch_size=args.patch_size,
@@ -366,13 +367,13 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
     else:
         # see https://github.com/huggingface/pytorch-image-models/discussions/1323
         print(timm.__version__)
-        ptcfg = timm.models.registry.get_pretrained_cfg(f'{arch}')
-        ptcfg.pop('url')
-        ptcfg['file']=pretrained_path
+        # ptcfg = timm.models.registry.get_pretrained_cfg(f'{arch}')
+        # ptcfg.pop('url')
+        # ptcfg['file']=pretrained_path
         student = create_model(
                 arch,
                 drop_path_rate=drop_path_rate,
-                pretrained_cfg=ptcfg,
+                # pretrained_cfg=ptcfg,
                 in_chans=in_chans,
                 pretrained=True,
                 num_classes=0,
@@ -380,7 +381,7 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
         teacher = create_model(
                 arch,
                 in_chans=in_chans,
-                pretrained_cfg=ptcfg,
+                # pretrained_cfg=ptcfg,
                 pretrained=True,
                 num_classes=0
                 )
@@ -577,7 +578,8 @@ def train_one_dino(args, data_loader):
 
     # ============ init schedulers ... ============
     lr_schedule = utils.cosine_scheduler(
-        args.lr * (args.batch_size_per_gpu * utils.get_world_size()) / 256.,  # linear scaling rule
+        # args.lr * (args.batch_size_per_gpu * utils.get_world_size()) / 256.,  # linear scaling rule
+        args.lr * (args.batch_size_per_gpu) / 256.,  # linear scaling rule
         args.min_lr,
         args.epochs, len(data_loader),
         warmup_epochs=args.warmup_epochs,
@@ -879,6 +881,7 @@ def prepare_sentinel_data(args):
     else:
         class Raster(RasterDataset):
             filename_glob = "Mosa8bits_brute_hilleshade_303020221.tif"
+            all_bands = [1,2,3,4,5,6,7,8,9,10]
             is_image = True
 
     dataset = Raster(args.data_path)
