@@ -840,70 +840,77 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    # for arch, id in zip(['vit_base_patch16_224','resnet50', 'efficientnet_b0'],['537040','537038','537035']):
+    for arch, id in zip(['efficientnet_b0'],['537035']):
+
 
     #     checkpoint_path = f'./logs/{arch}/checkpoint.pth'
-    #     model, embed_dim = create_template_model(arch, in_chans=1)
-    #     model = load_weights(model, checkpoint_path)
-    #     model.to(device)
+        checkpoint_path = f'./logs/trained_backbones/{arch}/{id}/checkpoint.pth'
+        model, embed_dim = create_template_model(arch, in_chans=1)
+        model = load_weights(model, checkpoint_path)
+        model.to(device)
 
-    #     print("Fit UMAP\n")
-    #     fit_proj(
-    #             model,
-    #             size=224,
-    #             nsamples=1_000,
-    #             feat_dim=embed_dim,
-    #             exclude_value=None,
-    #             patch_w=16, 
-    #             patch_h=16,
-    #             method='umap',
-    #             n_neighbors=20,
-    #             cls_token=True,
-    #             roi=None,
-    #             batch_size=16,
-    #             out_path_proj_model=f'./projs/umap/{arch}.pkl',
-    #             n_components=2
-    #             )
+        print("Fit UMAP\n")
+        fit_proj(
+                model,
+                size=224,
+                nsamples=1_000,
+                feat_dim=embed_dim,
+                exclude_value=None,
+                patch_w=16, 
+                patch_h=16,
+                method='umap',
+                n_neighbors=20,
+                cls_token=True,
+                roi=None,
+                batch_size=16,
+                out_path_proj_model=f'./projs/umap/{arch}.pkl',
+                n_components=2
+                )
 
-    #     print("Fit PCA\n")
-    #     fit_proj(
-    #             model,
-    #             size=224,
-    #             nsamples=1_000,
-    #             feat_dim=embed_dim,
-    #             exclude_value=None,
-    #             patch_w=16, 
-    #             patch_h=16,
-    #             method='pca',
-    #             n_neighbors=20,
-    #             cls_token=True,
-    #             roi=None,
-    #             batch_size=16,
-    #             out_path_proj_model=f'./projs/pca/{arch}.pkl',
-    #             n_components=2
-    #             )
+        print("Fit PCA\n")
+        fit_proj(
+                model,
+                size=224,
+                nsamples=1_000,
+                feat_dim=embed_dim,
+                exclude_value=None,
+                patch_w=16, 
+                patch_h=16,
+                method='pca',
+                n_neighbors=20,
+                cls_token=True,
+                roi=None,
+                batch_size=16,
+                out_path_proj_model=f'./projs/pca/{arch}.pkl',
+                n_components=2
+                )
 
-    #     print("Fit Kmeans\n")
-    #     fit_proj(
-    #             model,
-    #             size=224,
-    #             nsamples=1_000,
-    #             feat_dim=embed_dim,
-    #             exclude_value=None,
-    #             patch_w=16, 
-    #             patch_h=16,
-    #             method='kmeans',
-    #             n_neighbors=20,
-    #             cls_token=True,
-    #             roi=None,
-    #             batch_size=16,
-    #             out_path_proj_model=f'./projs/kmeans/{arch}.pkl',
-    #             )
+        print("Fit Kmeans\n")
+        fit_proj(
+                model,
+                size=224,
+                nsamples=1_000,
+                feat_dim=embed_dim,
+                exclude_value=None,
+                patch_w=16, 
+                patch_h=16,
+                method='kmeans',
+                n_neighbors=20,
+                cls_token=True,
+                roi=None,
+                batch_size=16,
+                out_path_proj_model=f'./projs/kmeans/{arch}.pkl',
+                )
 
 
-    for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    # for arch in ['dino_vitb16','dino_resnet50', 'efficientnet_b0','efficientnet_b3']:
+    for arch, id in zip(['vit_base_patch16_224','resnet50', 'efficientnet_b0'],['537040','537038','537035']):
 
-        for step in ['0000','0020','0040','0060','0080','0100','0120','0140','0160','0180','']:
-            checkpoint_path = f'./logs/{arch}/checkpoint{step}.pth'
+
+
+        for step in ['0000','0010','0020','0030','0040','0050','0060','0070','0080','0090','']:
+            checkpoint_path = f'./logs/trained_backbones/{arch}/{id}/checkpoint{step}.pth'
             model, embed_dim = create_template_model(arch, in_chans=1)
             model = load_weights(model, checkpoint_path)
             model.to(device)

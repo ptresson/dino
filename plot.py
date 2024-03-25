@@ -63,7 +63,8 @@ def get_lim(arch="dino_vitb16", method='umap', margin=0.10):
     total_df = pd.concat([gdf1, gdf2], ignore_index=True)
 
     # for step in ['0020','0040','0060','0080','']:
-    for step in ['0000','0020','0040','0060','0080','0100','0120','0140','0160','0180','']:
+    # for step in ['0000','0020','0040','0060','0080','0100','0120','0140','0160','0180','']:
+    for step in ['0000','0010','0020','0030','0040','0050','0060','0070','0080','0090','']:
         gdf1 = gpd.read_file(f'./out/A/{arch}{step}.shp')
         gdf2 = gpd.read_file(f'./out/B/{arch}{step}.shp')
         merged_df = pd.concat([gdf1, gdf2], ignore_index=True)
@@ -82,13 +83,15 @@ def get_lim(arch="dino_vitb16", method='umap', margin=0.10):
 
 if __name__ == "__main__":
 
-    for arch in ['dino_vitb16', 'dino_resnet50', 'efficientnet_b0', 'efficientnet_b3']:
+    # for arch in ['dino_vitb16', 'dino_resnet50', 'efficientnet_b0', 'efficientnet_b3']:
+    for arch in ['vit_base_patch16_224','resnet50', 'efficientnet_b0']:
     # for arch in ['efficientnet_b0', 'efficientnet_b3']:
     # for arch in ['dino_vitb16', 'dino_resnet50']:
 
         xlim_umap, ylim_umap = get_lim(arch)
         xlim_pca, ylim_pca = get_lim(arch, method='pca')
 
-        for step in ['0000','0020','0040','0060','0080','0100','0120','0140','0160','0180','']:
+        # for step in ['0000','0020','0040','0060','0080','0100','0120','0140','0160','0180','']:
+        for step in ['0000','0010','0020','0030','0040','0050','0060','0070','0080','0090','']:
             plot_proj(f'{arch}{step}', method='umap', xlim=xlim_umap, ylim=ylim_umap)
             plot_proj(f'{arch}{step}', method='pca', xlim=xlim_pca, ylim=ylim_pca)
