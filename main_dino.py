@@ -58,7 +58,7 @@ def get_args_parser():
     parser = argparse.ArgumentParser('DINO', add_help=False)
 
     # Model parameters
-    parser.add_argument('--arch', default='dino_vitb16', type=str,
+    parser.add_argument('--arch', default='dinoresnet50', type=str,
         #choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small'], #\
                 #+ torchvision_archs + torch.hub.list("facebookresearch/xcit:main"),
         help="""Name of architecture to train. For quick experiments with ViTs,
@@ -363,6 +363,19 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
 #       #     teacher.load_state_dict(pretrained.state_dict())
 
 
+    if 'resnet' in arch :
+        print("================== Resnet50")
+        student = torch.hub.load('facebookresearch/dino:main', 'dino_resnet50')
+        student = resnet_first_layer_with_nchan(student, in_chans)
+
+        teacher = torch.hub.load('facebookresearch/dino:main', 'dino_resnet50')
+        teacher = resnet_first_layer_with_nchan(teacher, in_chans)
+        if not hasattr(student, 'embed_dim'):
+            x = student(torch.rand(1,in_chans,224,224))
+            # student.fc, student.head = nn.Identity(), nn.Identity()
+            embed_dim = x.shape[1]
+        else:
+            embed_dim = student.embed_dim
 
     else:
         # see https://github.com/huggingface/pytorch-image-models/discussions/1323
@@ -376,12 +389,14 @@ def get_model(arch, in_chans, drop_path_rate, pretrained=True, patch_size=16):
                 # pretrained_cfg=ptcfg,
                 in_chans=in_chans,
                 pretrained=True,
+                checkpoint_path = './dino_resnet50_pretrain.pth',
                 num_classes=0,
                 )
         teacher = create_model(
                 arch,
                 in_chans=in_chans,
                 # pretrained_cfg=ptcfg,
+                checkpoint_path = './dino_resnet50_pretrain.pth',
                 pretrained=True,
                 num_classes=0
                 )
