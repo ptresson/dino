@@ -935,7 +935,7 @@ def prepare_sentinel_data(args):
             drop_last=True,
             )
 
-    data_loader = MergedDataLoader(datasetA,datasetB)
+    data_loader = MergedDataLoader(data_loaderA,data_loaderB)
 
     return data_loader
 
