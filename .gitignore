@@ -4,3 +4,4 @@ logs
 __pycache__
 projs
 out
+dino_resnet50_pretrain.pth
