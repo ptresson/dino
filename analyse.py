@@ -19,6 +19,7 @@ def get_rand_score(checkpoint, target='C_ID'):
 if __name__ == "__main__":
     
     for arch in ['vit_base_patch16_224','resnet50', 'efficientnet_b0']:
+        print(arch)
 
         scores_id = []
         scores_src = []
@@ -27,6 +28,7 @@ if __name__ == "__main__":
             score_src = get_rand_score(f'{arch}{step}', 'src')
             scores_id.append(score_id)
             scores_src.append(score_src)
+            print(f'{score_id:.2}\t{score_src:.2}')
 
-        print(f'{arch}\t{min(scores_id), max(scores_id)}\t{min(scores_src), max(scores_src)}')
+        # print(f'{arch}\t{min(scores_id), max(scores_id)}\t{min(scores_src), max(scores_src)}')
 
