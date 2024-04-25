@@ -449,8 +449,9 @@ def is_main_process():
 
 
 def save_on_master(*args, **kwargs):
-    if is_main_process():
-        torch.save(*args, **kwargs)
+    torch.save(*args, **kwargs)
+    # if is_main_process():
+    #     torch.save(*args, **kwargs)
 
 
 def setup_for_distributed(is_master):
