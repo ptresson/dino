@@ -133,9 +133,9 @@ def get_args_parser():
         Used for small local view cropping of multi-crop.""")
 
     # Misc
-    parser.add_argument('--data_path', default='/home/ptresson/congo/sentinel/', type=str,
+    parser.add_argument('--data_path', default='/home/ptresson/congo/panchro_congo_all_renamed/', type=str,
         help='Please specify path to the ImageNet training data.')
-    parser.add_argument('--output_dir', default="./logs/brdf", type=str, help='Path to save logs and checkpoints.')
+    parser.add_argument('--output_dir', default="./logs/pleiades", type=str, help='Path to save logs and checkpoints.')
     parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=0, type=int, help='Number of data loading workers per GPU.')
@@ -873,39 +873,35 @@ def prepare_sentinel_data(args):
         dataset_std = args.sd_dataset,
     )
 
-    if args.corrected:
-        class Raster(RasterDataset):
-            filename_glob = "Mosa_8B_Projet_Pheno_24022022.tif"
-            is_image = True
+    class Raster(RasterDataset):
+        filename_glob = "*.tif"
+        is_image = True
 
-    else:
-        class Raster(RasterDataset):
-            filename_glob = "Mosa8bits_brute_hilleshade_303020221.tif"
-            all_bands = [1,2,3,4,5,6,7,8,9,10]
-            is_image = True
+    datasetA = Raster(os.path.join(args.data_path,'A'))
+    datasetB = Raster(os.path.join(args.data_path,'B'))
 
-    dataset = Raster(args.data_path)
+    datasetA.transforms = transform
+    datasetB.transforms = transform
 
-    dataset.transforms = transform
 
-    bb = dataset.index.bounds
-
-    roi = BoundingBox(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
-
-    sampler = RandomGeoSampler(
-            dataset, 
+    samplerA = RandomGeoSampler(
+            datasetA, 
             size=(args.sample_size,args.sample_size), 
             length=args.num_samples, 
-            roi=roi
+            )
+    samplerB = RandomGeoSampler(
+            datasetB, 
+            size=(args.sample_size,args.sample_size), 
+            length=args.num_samples, 
             )
 
     collate_fn = partial(
         collate_data_and_cast_torchgeo,
     )
 
-    data_loader = DataLoader(
-            dataset, 
-            sampler=sampler, 
+    data_loaderA = DataLoader(
+            datasetA, 
+            sampler=samplerA, 
             collate_fn=collate_fn, 
             shuffle=False, 
             batch_size=args.batch_size_per_gpu,
@@ -913,6 +909,18 @@ def prepare_sentinel_data(args):
             pin_memory=True,
             drop_last=True,
             )
+    data_loaderB = DataLoader(
+            datasetB, 
+            sampler=samplerB, 
+            collate_fn=collate_fn, 
+            shuffle=False, 
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            )
+
+    data_loader = MergedDataLoader(datasetA,datasetB)
 
     return data_loader
 
