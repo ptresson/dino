@@ -146,9 +146,9 @@ def get_args_parser():
     # torchgeo specific
     parser.add_argument("--filename_glob", default="*.[tT][iI][fF]", type=str, help="Filename glob to select dataset files")
     parser.add_argument("--sample_size", default=224, type=int, help="size of samples (px) in torchgeo")
-    parser.add_argument("--num_samples", default=100_000, type=int, help="number of sample for torchgeo sampler")
-    parser.add_argument("--mean_dataset", default=[118.61897209826,108.64862578646,74.299567137674,128.58062678415,78.264311585937,122.89514688913,137.14044551509,139.30259245283,72.188204447851,46.75183561633,142.9639953584], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
-    parser.add_argument("--sd_dataset", default=[53.144739238236,49.092660967468,42.331142946847,47.635403548161,44.975424397381,47.834278860924,45.405740935281,45.354688621251,45.220474931332,41.992920448203,18.166579325965], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
+    parser.add_argument("--num_samples", default=10_000, type=int, help="number of sample for torchgeo sampler")
+    parser.add_argument("--mean_dataset", default=[558.03], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
+    parser.add_argument("--sd_dataset", default=[89.63], type=lambda s: [float(item) for item in s.split(',')], help="number of sample for torchgeo sampler")
     parser.add_argument('--corrected', type=utils.bool_flag, default=False, help="use brdf corrected image")
 
     return parser
